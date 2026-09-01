@@ -1,0 +1,82 @@
+# --- Python -----------------------------------------------------------------
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# --- Virtual environments / uv ----------------------------------------------
+.venv/
+venv/
+env/
+ENV/
+.python-version
+# uv.lock IS committed for applications; uncomment the next line if this ever
+# becomes a library published to PyPI.
+# uv.lock
+
+# --- Tooling caches ---------------------------------------------------------
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.pytype/
+.dmypy.json
+dmypy.json
+.tox/
+.nox/
+.cache/
+htmlcov/
+.coverage
+.coverage.*
+coverage.xml
+*.cover
+nosetests.xml
+
+# --- Secrets / local config -------------------------------------------------
+.env
+.env.*
+!.env.example
+# direnv: the most common way an ANTHROPIC_API_KEY reaches a shell, and not a name the
+# .env* glob above catches.
+.envrc
+.direnv/
+*.pem
+*.key
+*.p12
+
+# --- Editors ----------------------------------------------------------------
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# --- macOS ------------------------------------------------------------------
+.DS_Store
+.AppleDouble
+.LSOverride
+._*
+.Spotlight-V100
+.Trashes
+Icon?
+
+# --- Local scratch ----------------------------------------------------------
+*.log
+tmp/
+notes/

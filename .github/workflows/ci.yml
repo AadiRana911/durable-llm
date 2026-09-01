@@ -1,0 +1,234 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: py${{ matrix.python-version }} lint + full test suite (incl. chaos)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    # One leg per interpreter pyproject.toml actually claims: `requires-python = ">=3.11"`
+    # and the 3.11/3.12/3.13 classifiers. Testing a single version made two thirds of that
+    # promise unverified. ruff's `target-version = "py311"` catches syntax the floor cannot
+    # parse, but it cannot see a 3.13 stdlib removal, a behaviour change under the newest
+    # interpreter, or a psycopg binary wheel that has not been published for it yet.
+    strategy:
+      # A red 3.13 with a green 3.11 and 3.12 is a completely different diagnosis than all
+      # three failing, and that distinction is only visible if the others are allowed to
+      # finish. Cancelling siblings would trade the answer for a couple of runner-minutes.
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.12", "3.13"]
+
+    # Service containers are per-job, and each matrix leg is its own job on its own runner:
+    # the three legs get three private, empty Postgres instances. Nothing here needs to be
+    # namespaced per version and the fixed 5432 host port cannot collide, because no two
+    # legs ever share a runner. The chaos tests, which truncate and re-seed tables, would
+    # otherwise be racing each other across versions.
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: llmrun
+          POSTGRES_PASSWORD: llmrun
+          POSTGRES_DB: llmrun
+          # Matches docker-compose.yml. Deterministic collation so ORDER BY in `runs list`
+          # sorts identically here and on a developer's machine -- a gate that runs under a
+          # different collation than the documented dev environment is the one place least
+          # likely to catch a collation-sensitive ordering bug.
+          POSTGRES_INITDB_ARGS: "--encoding=UTF8 --locale=C"
+        ports:
+          - 5432:5432
+        # The job does not start until this reports healthy, so no sleep is needed below.
+        options: >-
+          --health-cmd "pg_isready -q -h 127.0.0.1 -p 5432 -U llmrun -d llmrun"
+          --health-interval 2s
+          --health-timeout 3s
+          --health-retries 30
+          --health-start-period 5s
+
+    env:
+      # Service containers are published on localhost for jobs running on the runner host.
+      LLMRUN_DATABASE_URL: postgresql://llmrun:llmrun@localhost:5432/llmrun
+      LLMRUN_PROVIDER: echo
+      # So `examples/` is importable by dotted name from worker subprocesses.
+      PYTHONPATH: ${{ github.workspace }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # setup-uv folds the resolved Python version into its cache key, so the three legs
+      # keep separate wheel caches instead of one leg restoring another's 3.11-tagged
+      # wheels into a 3.13 interpreter.
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          enable-cache: true
+          cache-dependency-glob: |
+            pyproject.toml
+            uv.lock
+
+      # --locked fails the build if uv.lock has drifted from pyproject.toml instead of
+      # silently re-resolving. The lock is committed on purpose; nothing else enforces that
+      # it stays in sync, and an out-of-date lock on main defeats the reason for having one.
+      - name: Sync dependencies
+        run: uv sync --locked
+
+      # Both halves of `make lint`. Without the format check CI is a weaker gate than the
+      # target developers are told to run, and formatting drift lands on main unnoticed.
+      - name: Lint
+        run: uv run --frozen ruff check --output-format=github .
+
+      - name: Format check
+        run: uv run --frozen ruff format --check .
+
+      - name: Apply migrations
+        run: uv run --frozen llmrun migrate
+
+      # No `-m "not chaos"` here on purpose: CI is the one place the crash-and-resume
+      # suite must always run, because it is the proof that retries do not double-bill.
+      - name: Test
+        run: uv run --frozen pytest -ra
+
+  # The `anthropic` extra is never installed by the job above and no test imports the SDK,
+  # so nothing in this repo has ever executed against the real package. That leaves two
+  # claims untested: the `anthropic>=0.121` floor in pyproject.toml, and the by-name lookup
+  # in `AnthropicProvider._classify`, which resolves its exception classes with
+  # `getattr(sdk, name, None)` precisely so a renamed class cannot raise AttributeError from
+  # inside an error handler. That defence is also the failure mode: if the SDK drops or
+  # renames one of those names, classification quietly falls back to the status-code
+  # backstop, RateLimitError stops being a TransientError, and a retryable 429 becomes a
+  # permanent run failure. Nothing crashes and no test goes red. This job is the alarm.
+  #
+  # Separate from `test` because it needs no Postgres and no matrix -- the SDK's public
+  # names do not vary by interpreter, so one leg answers the question three would.
+  anthropic-contract:
+    name: anthropic extra SDK contract
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.12"
+          enable-cache: true
+          cache-dependency-glob: |
+            pyproject.toml
+            uv.lock
+
+      - name: Sync dependencies with the anthropic extra
+        run: uv sync --locked --extra anthropic
+
+      # --extra is repeated rather than inherited from the step above. `uv run` resolves the
+      # environment for the extras it is given; today its implicit sync only installs what is
+      # missing and never prunes, so a bare `uv run` would leave the SDK in place -- but that
+      # is an implementation detail, and `uv sync` itself does prune (a plain `uv sync
+      # --locked` uninstalls anthropic again). Naming the extra makes this step state its own
+      # requirement instead of depending on what the previous one happened to leave behind.
+      #
+      # The script only looks names up. Constructing `Anthropic()` would demand an API key
+      # and calling it would demand network; neither is needed, because what is at risk is
+      # whether these names still resolve to something the adapter can use -- a question that
+      # is answered entirely by the imported module object.
+      - name: Assert the SDK surface the adapter resolves by name
+        run: |
+          uv run --frozen --extra anthropic python - <<'PY'
+          import anthropic
+
+          # A literal copy of `Anthropic` + `_TRANSIENT_EXCEPTION_NAMES` from
+          # src/llmrun/providers/anthropic.py, and deliberately not an import of them.
+          # Importing the adapter's own tuple would make this job agree with the code no
+          # matter what either side renamed; the point is to hold the code to a fixed claim.
+          CLIENT = "Anthropic"
+          TRANSIENT = (
+              "RateLimitError",
+              "APIConnectionError",
+              "APITimeoutError",
+              "InternalServerError",
+          )
+
+          # Held to two different standards because `_classify` holds them to two different
+          # standards: it keeps an exception name only if `isinstance(cls, type) and
+          # issubclass(cls, BaseException)`. A name kept alive as an alias to something
+          # non-raisable therefore clears hasattr *and* a bare `isinstance(x, type)`, and is
+          # then dropped from the transient tuple anyway -- which is precisely the silent
+          # degradation this job exists to catch, so a weaker assertion here would wave
+          # through the case it was written for. `Anthropic` is the client class rather than
+          # an exception, so it is only ever required to be a class.
+          def _resolve(name):
+              cls = getattr(anthropic, name, None)
+              return cls if isinstance(cls, type) else None
+
+          # `is not None` rather than truthiness: a class is normally truthy, but a metaclass
+          # is free to define __bool__/__len__, and a falsy class would read here as a
+          # missing name and fail the job for the wrong reason.
+          missing = [] if _resolve(CLIENT) is not None else [CLIENT]
+          missing += [
+              name
+              for name in TRANSIENT
+              if _resolve(name) is None or not issubclass(_resolve(name), BaseException)
+          ]
+          if missing:
+              raise SystemExit(
+                  f"anthropic {anthropic.__version__} is missing names that "
+                  f"llmrun.providers.anthropic resolves at runtime: {', '.join(missing)}. "
+                  "Error classification has silently degraded to the status-code backstop; "
+                  "fix the adapter and raise the floor in pyproject.toml."
+              )
+
+          count = 1 + len(TRANSIENT)
+          print(f"anthropic {anthropic.__version__}: all {count} required names present")
+          PY
+
+  # Its own job rather than a step in `test`: bound to the lockfile, not the interpreter, so
+  # running it on the matrix would compute the same answer three times, and it needs neither
+  # Postgres nor a synced project environment to do it.
+  audit:
+    name: dependency CVE audit
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.12"
+          enable-cache: true
+          cache-dependency-glob: |
+            pyproject.toml
+            uv.lock
+
+      # Audits what the lock actually resolves to rather than what a fresh resolve would
+      # pick today, so the verdict describes the versions the test job really ran.
+      #
+      # --all-extras: `anthropic` is optional to install, not optional to keep patched, and
+      #   it drags in httpx/pydantic/anyio -- by far the largest CVE surface in the tree.
+      # --no-emit-project: drops the self-referencing `llmrun` entry, which pip-audit would
+      #   try and fail to look up on PyPI (the package is unpublished).
+      # No --ignore-vuln list on purpose. The tree is clean today, so the first entry here
+      # would be a decision someone made under deadline pressure; make them add it visibly.
+      - name: Audit locked dependencies for known CVEs
+        run: |
+          uv export --frozen --all-extras --no-emit-project -o /tmp/req.txt
+          uv tool run pip-audit -r /tmp/req.txt

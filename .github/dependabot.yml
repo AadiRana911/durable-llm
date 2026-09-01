@@ -1,0 +1,46 @@
+# Automated dependency updates.
+#
+# The CVE gate in .github/workflows/ci.yml reports that the tree has a known vulnerability;
+# it cannot do anything about it. Without this file the only thing that moves uv.lock is a
+# human remembering to, which means the audit step's first real finding would land as a red
+# build on an unrelated PR, blocking work that has nothing to do with it. Dependabot turns
+# that into a PR that is already open, already green, and already reviewed.
+version: 2
+
+updates:
+  # uv.lock is committed and CI syncs with --locked, so a bump has to change the lockfile to
+  # take effect -- `dependabot: uv` understands that pair and edits both it and
+  # pyproject.toml. The generic `pip` ecosystem would rewrite pyproject.toml and leave the
+  # lock stale, which CI would then reject as drift on every subsequent PR.
+  - package-ecosystem: "uv"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    # Runtime is one direct dependency (psycopg) plus one optional extra (anthropic), so
+    # ungrouped PRs stay individually reviewable -- which is what you want, because the
+    # anthropic bump is the one that can silently break `_classify`'s name lookups and the
+    # `anthropic-contract` job exists to catch exactly that. Grouping it into a batch with
+    # ruff and pytest would bury the signal. Dev tooling is batched for the same reason in
+    # reverse: a ruff or pytest bump carries no runtime risk and does not deserve its own PR.
+    groups:
+      dev-tooling:
+        dependency-type: "development"
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "deps"
+
+  # Every `uses:` in the workflow is pinned to a floating major (actions/checkout@v4,
+  # astral-sh/setup-uv@v5). That silently absorbs patches but never crosses a major, so
+  # without this the workflow would sit on v4/v5 until something broke. Batched into one PR:
+  # these are CI-only, they fail loudly and immediately when wrong, and the whole point is
+  # for them to be cheap to merge.
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    groups:
+      github-actions:
+        patterns:
+          - "*"
+    commit-message:
+      prefix: "ci"

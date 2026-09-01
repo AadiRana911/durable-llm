@@ -1,0 +1,131 @@
+[build-system]
+# Capped, unlike a normal runtime dependency, because build-requires are the one place uv
+# cannot protect us: PEP 517 resolves them in an isolated environment of its own, so
+# hatchling never appears in uv.lock, is never hashed, and is fetched fresh from PyPI at
+# install time -- unverified third-party code that executes on every source build. An open
+# upper bound means a hatchling 2.x released tomorrow runs here before anyone reads its
+# changelog, on every machine that builds this package, with no lockfile to pin it back.
+requires = ["hatchling>=1.25,<2"]
+build-backend = "hatchling.build"
+
+[project]
+name = "llmrun"
+version = "0.1.0"
+description = "Crash-safe, budget-capped, idempotent multi-step LLM pipelines with all state in Postgres."
+readme = "README.md"
+requires-python = ">=3.11"
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [{ name = "Asad Imtiaz" }]
+keywords = ["llm", "pipeline", "postgres", "idempotency", "durable-execution", "anthropic"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Software Development :: Libraries :: Application Frameworks",
+    "Typing :: Typed",
+]
+
+# The core is deliberately provider-free: psycopg is the only runtime dependency, so
+# `pip install llmrun` pulls in no SDKs, no HTTP client, and no ORM.
+dependencies = ["psycopg[binary]>=3.2"]
+
+[project.optional-dependencies]
+# Floor pinned to the version this adapter is actually built and tested against. It is not
+# the oldest SDK that imports: it is the oldest one known to carry `stop_reason="refusal"`
+# and the `stop_details` fields `providers/anthropic.py` reads to explain a refusal. An
+# older SDK degrades silently rather than crashing -- the adapter reads both defensively --
+# so a loose floor would advertise refusal handling that quietly does not happen.
+#
+# The ceiling exists for the opposite reason. The adapter resolves SDK exception classes by
+# NAME rather than importing them, precisely so a minor bump that adds, renames, or reshuffles
+# an error type degrades into the generic retry path instead of failing at import. That trick
+# only buys tolerance for churn *within* a major line: a 1.0 is free to move the module paths,
+# client constructor, and response shapes the adapter reads directly, and none of that is
+# name-resolved or defensive. Degrading is acceptable; silently mapping every call onto a
+# reshaped API is not. Lift this deliberately, after running the adapter against 1.x.
+anthropic = ["anthropic>=0.121,<1"]
+
+[project.urls]
+Homepage = "https://github.com/asadimtiaz/llmrun"
+Repository = "https://github.com/asadimtiaz/llmrun"
+Issues = "https://github.com/asadimtiaz/llmrun/issues"
+Documentation = "https://github.com/asadimtiaz/llmrun/blob/main/docs/DESIGN.md"
+
+# Test and lint tooling is not part of the installable surface, so it is a dependency
+# *group* (PEP 735) rather than a published extra: `uv sync` installs it by default for
+# developers, and `pip install llmrun[dev]` cannot pull pytest into an end user's
+# environment because there is no such extra to ask for.
+[dependency-groups]
+dev = ["pytest>=8", "ruff>=0.6"]
+
+[project.scripts]
+llmrun = "llmrun.cli:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/llmrun"]
+
+# The migration SQL lives at the repo root (see docs/DESIGN.md) so it is easy to read and
+# diff. Ship a copy inside the wheel as well, otherwise `pip install llmrun && llmrun
+# migrate` has no SQL to apply outside of a source checkout.
+[tool.hatch.build.targets.wheel.force-include]
+"migrations" = "llmrun/migrations"
+
+[tool.hatch.build.targets.sdist]
+include = [
+    "/src",
+    "/migrations",
+    "/examples",
+    "/tests",
+    "/docs",
+    "/Makefile",
+    "/docker-compose.yml",
+    "/.env.example",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+src = ["src", "tests", "examples"]
+# Recent ruff formats Python fenced in Markdown. docs/DESIGN.md is the binding contract and
+# is quoted verbatim in reviews -- `make fmt` must never rewrite it.
+extend-exclude = [".venv", "build", "dist", "*.md"]
+
+[tool.ruff.lint]
+select = [
+    "E",   # pycodestyle errors
+    "W",   # pycodestyle warnings
+    "F",   # pyflakes
+    "I",   # import sorting
+    "B",   # bugbear
+    "C4",  # comprehensions
+    "UP",  # pyupgrade
+    "SIM", # simplifications
+    "RUF", # ruff-specific
+]
+ignore = [
+    # docs/DESIGN.md specifies `class ErrorClass(str, Enum)`. That is deliberate: the
+    # members must compare equal to the plain strings stored in `runs.error_class` and
+    # adapt to text when passed straight to psycopg. StrEnum would work on 3.11+ but the
+    # contract is the contract, and this rule is style-only.
+    "UP042",
+]
+
+[tool.ruff.lint.isort]
+known-first-party = ["llmrun"]
+
+[tool.ruff.format]
+docstring-code-format = true
+
+[tool.pytest.ini_options]
+minversion = "8.0"
+testpaths = ["tests"]
+addopts = "-ra --strict-markers --strict-config --showlocals"
+xfail_strict = true
+markers = [
+    "chaos: crash-and-resume end-to-end tests; slow, spawn worker subprocesses, need Postgres",
+]

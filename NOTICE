@@ -1,0 +1,93 @@
+llmrun -- third-party licence notice
+====================================
+
+llmrun itself is licensed under the MIT License. See LICENSE for the full text and the
+copyright holder. Nothing below changes that; this file records the licences of the
+dependencies llmrun installs, because those terms are not all MIT and some of them place
+obligations on anyone who redistributes a build.
+
+The licence identifiers here were read from the installed distributions' `.dist-info`
+METADATA rather than transcribed from documentation, and reflect the versions resolved in
+uv.lock. Re-check them after a dependency bump: upstream projects do relicense.
+
+
+Required runtime dependency: psycopg (LGPL-3.0-only)
+----------------------------------------------------
+
+  psycopg          3.3.x    LGPL-3.0-only
+  psycopg-binary   3.3.x    LGPL-3.0-only
+
+psycopg is llmrun's only mandatory runtime dependency and it is copyleft, not permissive.
+Using it as a library in an unmodified, separately-installed form (the normal
+`pip install llmrun` case) does not affect the licence of your own code. Redistributing
+psycopg -- vendoring it, bundling it into a container image, an installer, a frozen
+binary, or any other artefact you ship to a third party -- makes you a redistributor, and
+LGPL-3.0-only then requires you to convey the psycopg licence and source-availability
+terms, and to leave the recipient able to relink against a modified psycopg. Consult the
+LGPL-3.0 text and your own counsel; this paragraph is a pointer, not legal advice.
+
+
+Native libraries vendored by psycopg[binary]
+--------------------------------------------
+
+llmrun depends on `psycopg[binary]`, which installs the psycopg-binary wheel. That wheel
+does not link against a system libpq -- it ships its own copy of libpq together with the
+transitive native stack libpq needs:
+
+  libpq          (PostgreSQL client library)  PostgreSQL Licence
+  OpenSSL 3      (libssl, libcrypto)          Apache-2.0
+  MIT Kerberos 5 (libgssapi_krb5, libkrb5,    MIT-style (MIT Kerberos licence)
+                  libk5crypto, libcom_err)
+  OpenLDAP       (libldap, liblber)           OpenLDAP Public License
+
+These are compiled shared objects inside the Python package. Python-level vulnerability
+scanners -- pip-audit, `uv pip audit`, Dependabot on requirements/lock files, and anything
+else that works from PyPI package names and versions -- resolve `psycopg-binary==3.3.4`
+and stop there. They do not enumerate the vendored libraries and therefore report no
+findings for an OpenSSL or Kerberos CVE that is present in the wheel. A quiet report from
+those tools is not evidence that the native stack is patched.
+
+Operators who need native-library CVE tracking should install plain `psycopg` (without the
+`binary` extra) built against a system libpq, so that OpenSSL, Kerberos, and OpenLDAP come
+from the OS package manager and are covered by the OS vulnerability feed and its updates.
+That path requires libpq and a build toolchain to be present; the binary wheel exists to
+avoid exactly that, which is why it is the default here and why this trade-off is written
+down rather than assumed.
+
+
+Optional `anthropic` extra
+--------------------------
+
+`pip install llmrun[anthropic]` pulls in the Anthropic SDK and its transitive closure. All
+of it is permissive, but the spread is wider than MIT alone -- notably certifi, which is
+weak-copyleft:
+
+  certifi              MPL-2.0                 (also bundles the Mozilla CA root store)
+  anthropic            MIT
+  anyio                MIT
+  docstring-parser     MIT
+  jiter                MIT
+  pydantic             MIT
+  pydantic-core        MIT
+  annotated-types      MIT
+  typing-inspection    MIT
+  h11                  MIT
+  httpx                BSD-3-Clause
+  httpcore             BSD-3-Clause
+  idna                 BSD-3-Clause
+  distro               Apache-2.0
+  sniffio              MIT OR Apache-2.0
+  typing-extensions    PSF-2.0
+
+MPL-2.0 is file-level copyleft: it constrains modifications to certifi's own files, not
+code that merely imports it. The core of llmrun does not install any of these -- the
+provider adapters are optional on purpose, so a deployment that only uses the `echo`
+provider carries the psycopg licences and nothing else.
+
+
+Development-only dependencies
+-----------------------------
+
+pytest, ruff, and their transitive dependencies are in the `dev` dependency group, not in
+any published extra. They are not installed by `pip install llmrun` and are not part of
+llmrun's distributable surface, so they are not enumerated here.

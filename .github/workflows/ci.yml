@@ -104,8 +104,106 @@ jobs:
       - name: Test
         run: uv run --frozen pytest -ra
 
-  # The `anthropic` extra is never installed by the job above and no test imports the SDK,
-  # so nothing in this repo has ever executed against the real package. That leaves two
+  # A green source-checkout suite does not prove the package is usable: imports can find
+  # repository files that Hatch omitted from the artifact. Migrations are especially exposed
+  # because their readable source lives at the repository root and is copied into the wheel
+  # by build configuration. Install the artifact somewhere that cannot see the checkout,
+  # then make that installed CLI bootstrap a clean database from its bundled SQL.
+  package:
+    name: build + installed-wheel smoke
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: llmrun
+          POSTGRES_PASSWORD: llmrun
+          POSTGRES_DB: llmrun
+          POSTGRES_INITDB_ARGS: "--encoding=UTF8 --locale=C"
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -q -h 127.0.0.1 -p 5432 -U llmrun -d llmrun"
+          --health-interval 2s
+          --health-timeout 3s
+          --health-retries 30
+          --health-start-period 5s
+
+    env:
+      LLMRUN_DATABASE_URL: postgresql://llmrun:llmrun@localhost:5432/llmrun
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.12"
+          enable-cache: true
+          cache-dependency-glob: |
+            pyproject.toml
+            uv.lock
+
+      - name: Verify the lock and build both distribution formats
+        run: |
+          uv lock --check
+          uv build
+
+      - name: Install the wheel outside the checkout and migrate a clean database
+        shell: bash
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          wheels=("$GITHUB_WORKSPACE"/dist/*.whl)
+          sdists=("$GITHUB_WORKSPACE"/dist/*.tar.gz)
+          if (( ${#wheels[@]} != 1 || ${#sdists[@]} != 1 )); then
+            echo "expected one wheel and one sdist;" \
+              "got ${#wheels[@]} wheel(s) and ${#sdists[@]} sdist(s)" >&2
+            exit 1
+          fi
+
+          smoke_dir="$RUNNER_TEMP/llmrun-wheel-smoke"
+          uv venv --python 3.12 "$smoke_dir"
+          uv pip install --python "$smoke_dir/bin/python" "${wheels[0]}"
+
+          cd "$RUNNER_TEMP"
+          "$smoke_dir/bin/llmrun" migrate
+          "$smoke_dir/bin/llmrun" health
+          "$smoke_dir/bin/python" - <<'PY'
+          import os
+
+          import psycopg
+
+          from llmrun.migrate import default_migrations_dir
+
+          expected = [
+              "0001_initial",
+              "0002_attempt_ceiling",
+              "0003_integrity_and_pacing",
+          ]
+          bundled = sorted(path.stem for path in default_migrations_dir().glob("*.sql"))
+          if bundled != expected:
+              raise SystemExit(
+                  f"installed wheel bundled migrations {bundled!r}, expected {expected!r}"
+              )
+
+          with psycopg.connect(os.environ["LLMRUN_DATABASE_URL"]) as conn:
+              rows = conn.execute(
+                  "SELECT version, checksum FROM schema_migrations ORDER BY version"
+              ).fetchall()
+          if [row[0] for row in rows] != expected:
+              raise SystemExit(f"installed wheel applied unexpected migrations: {rows!r}")
+          if not rows[-1][1] or len(rows[-1][1]) != 64:
+              raise SystemExit("migration 0003 was applied without its SHA-256 checksum")
+
+          print("installed wheel: bundled migrations applied and checksummed")
+          PY
+
+  # The `anthropic` extra is never installed by the matrix test job and no test there imports
+  # the SDK, so that job does not execute against the real package. That leaves two
   # claims untested: the `anthropic>=0.121` floor in pyproject.toml, and the by-name lookup
   # in `AnthropicProvider._classify`, which resolves its exception classes with
   # `getattr(sdk, name, None)` precisely so a renamed class cannot raise AttributeError from

@@ -85,10 +85,10 @@ logger = logging.getLogger("llmrun.worker")
 DEFAULT_LEASE_SECONDS = 60
 """How long a claim is trusted before another worker may steal the run.
 
-llmrun deliberately does not renew leases mid-run: a heartbeat is another thing to get
-wrong, and the checkpointing in ``context.py`` makes an overlapping re-claim safe rather
-than catastrophic. Raise this if your steps are legitimately slower than a minute — the
-only cost is a longer wait before a genuinely crashed run is picked back up.
+Checkpoint transactions in ``context.py`` renew the lease when a step starts and when it
+successfully finishes, tying ownership to forward progress without a timer heartbeat. There
+is no renewal while a step body itself runs, so raise this if one step is legitimately slower
+than a minute. The cost is a longer wait before a genuinely crashed run is picked back up.
 """
 
 DEFAULT_POLL_INTERVAL = 1.0
@@ -101,10 +101,9 @@ DEFAULT_SWEEP_INTERVAL = float(DEFAULT_LEASE_SECONDS)
 
 The sweep used to run before every single claim, which at the default one-second poll meant
 one extra write transaction per worker per second forever, to find nothing almost every
-time. Stranding is a rare, slow event — a run only becomes strandable after its lease has
-expired — so checking once per lease period is both sufficient and, at any pool size, an
-order of magnitude less load. ``run_once`` still sweeps on every call by default, because a
-caller invoking it directly has no loop to pace it from.
+time. Stranding is a rare, slow event, so a fixed one-minute interval is sufficient and, at
+any pool size, an order of magnitude less load. ``run_once`` still sweeps on every call by
+default, because a caller invoking it directly has no loop to pace it from.
 """
 
 
@@ -353,8 +352,8 @@ def run_once(
 
     Args:
         sweep: Whether to look for stranded runs first. ``run_forever`` pages this down to
-            once per lease period; a direct caller has no loop to pace it from, so the
-            default is every call.
+            once per fixed sweep interval; a direct caller has no loop to pace it from, so
+            the default is every call.
     """
     # Resolved before claiming: a misconfigured provider should not cost a run an attempt.
     model = resolve_default_model(provider, default_model)
@@ -884,10 +883,8 @@ def run_forever(
 ) -> None:
     """Claim and execute runs until SIGTERM/SIGINT, or until ``max_runs`` are processed.
 
-    The design contract sketches this as ``NoReturn``. It is annotated ``None`` instead
-    because graceful shutdown is a requirement: on SIGTERM the loop finishes the run it
-    holds, writes the verdict, and returns so the caller can close the connection. A
-    function that handles SIGTERM properly is, by construction, a function that returns.
+    On SIGTERM the loop finishes the run it holds, writes the verdict, and returns so the
+    caller can close the connection.
 
     Args:
         reconnect: How to build a replacement connection when this one dies. The loop cannot
@@ -906,9 +903,9 @@ def run_forever(
     model = resolve_default_model(provider, default_model)
 
     # `run_once` sweeps for stranded runs on every call, which is right for a direct caller
-    # and wasteful once per second forever. Stranding cannot happen faster than a lease
-    # expiry, so checking that often is enough. Monotonic, because this is a duration and a
-    # wall clock that steps backwards would park the sweep until it caught up.
+    # and wasteful once per second forever. Stranded rows are slow-path maintenance, so a
+    # fixed minute is frequent enough. Monotonic, because this is a duration and a wall clock
+    # that steps backwards would park the sweep until it caught up.
     next_sweep = 0.0
     consecutive_errors = 0
 

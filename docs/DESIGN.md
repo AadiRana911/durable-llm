@@ -40,7 +40,7 @@ src/llmrun/
   pipeline.py        @pipeline decorator, Pipeline object
   context.py         RunContext: ctx.step() / ctx.llm() / ctx.escalate()
   worker.py          claim loop + disposition handling
-  cli.py             llmrun <migrate|worker|enqueue|runs|costs>
+  cli.py             llmrun <migrate|worker|enqueue|runs|costs|health>
   providers/
     __init__.py
     base.py          Provider protocol + LLMResult
@@ -50,10 +50,12 @@ src/llmrun/
 
 ## Schema (`migrations/*.sql`)
 
-Four tables, including `schema_migrations`.
-`0001_initial.sql` is the whole schema below; `0002_attempt_ceiling.sql` adds the two
-`runs` counters marked in it. Migrations are additive files rather than edits to an
-applied one, so a database that has already run `llmrun migrate` stays correct.
+Four tables, including `schema_migrations`. The DDL below is the effective schema after all
+three current migrations: `0001_initial.sql` creates the base tables,
+`0002_attempt_ceiling.sql` adds `failures` and `max_attempts`, and
+`0003_integrity_and_pacing.sql` adds retry pacing, migration checksums, provider latency,
+database constraints, and the final indexes. Migrations are additive files rather than edits
+to an applied one, so a database that has already run `llmrun migrate` stays correct.
 
 All ids are `uuid` generated with `gen_random_uuid()` (`pgcrypto` is not required on
 PG 13+; `gen_random_uuid()` is built in).
@@ -61,7 +63,8 @@ PG 13+; `gen_random_uuid()` is built in).
 ```sql
 CREATE TABLE schema_migrations (
     version     text PRIMARY KEY,
-    applied_at  timestamptz NOT NULL DEFAULT now()
+    applied_at  timestamptz NOT NULL DEFAULT now(),
+    checksum    text
 );
 
 CREATE TABLE runs (
@@ -81,9 +84,29 @@ CREATE TABLE runs (
     locked_by    text,
     locked_at    timestamptz,
     created_at   timestamptz NOT NULL DEFAULT now(),
-    updated_at   timestamptz NOT NULL DEFAULT now()
+    updated_at   timestamptz NOT NULL DEFAULT now(),
+    next_attempt_at timestamptz,
+    CONSTRAINT runs_status_chk CHECK (
+        status IN ('queued', 'running', 'succeeded', 'failed',
+                   'pending_review', 'halted_budget')
+    ),
+    CONSTRAINT runs_error_class_chk CHECK (
+        error_class IS NULL
+        OR error_class IN ('transient', 'malformed', 'policy', 'budget', 'permanent')
+    ),
+    CONSTRAINT runs_money_chk CHECK (
+        spent_usd >= 0 AND (budget_usd IS NULL OR budget_usd >= 0)
+    ),
+    CONSTRAINT runs_counters_chk CHECK (
+        attempt >= 0 AND failures >= 0 AND max_attempts >= 1
+    )
 );
-CREATE INDEX runs_claim_idx  ON runs (status, created_at);
+CREATE INDEX runs_claim_idx ON runs (created_at)
+    WHERE status IN ('queued', 'running');
+CREATE INDEX runs_created_idx ON runs (created_at DESC);
+CREATE INDEX runs_id_prefix_idx ON runs ((id::text) text_pattern_ops);
+CREATE INDEX runs_next_attempt_idx ON runs (next_attempt_at)
+    WHERE next_attempt_at IS NOT NULL;
 CREATE INDEX runs_tenant_idx ON runs (tenant_id, created_at DESC);
 
 CREATE TABLE steps (
@@ -97,7 +120,9 @@ CREATE TABLE steps (
     error_detail text,
     started_at   timestamptz NOT NULL DEFAULT now(),
     ended_at     timestamptz,
-    PRIMARY KEY (run_id, name)
+    PRIMARY KEY (run_id, name),
+    CONSTRAINT steps_status_chk CHECK (status IN ('running', 'succeeded', 'failed')),
+    CONSTRAINT steps_attempt_chk CHECK (attempt >= 0)
 );
 
 CREATE TABLE llm_calls (
@@ -112,15 +137,25 @@ CREATE TABLE llm_calls (
     cost_usd    numeric(12,6) NOT NULL DEFAULT 0,
     cached      boolean     NOT NULL DEFAULT false,
     response    jsonb,                          -- {"text": ..., "model": ...}
-    created_at  timestamptz NOT NULL DEFAULT now()
+    created_at  timestamptz NOT NULL DEFAULT now(),
+    duration_ms integer,
+    CONSTRAINT llm_calls_tokens_chk CHECK (
+        tokens_in >= 0 AND tokens_out >= 0 AND cost_usd >= 0
+    ),
+    CONSTRAINT llm_calls_duration_chk CHECK (duration_ms IS NULL OR duration_ms >= 0),
+    CONSTRAINT llm_calls_cached_free_chk CHECK (NOT cached OR cost_usd = 0)
 );
-CREATE INDEX llm_calls_cache_idx ON llm_calls (run_id, input_hash) WHERE cached = false;
-CREATE INDEX llm_calls_run_idx   ON llm_calls (run_id, created_at);
+CREATE UNIQUE INDEX llm_calls_cache_idx
+    ON llm_calls (run_id, input_hash) WHERE cached = false;
+CREATE INDEX llm_calls_run_idx ON llm_calls (run_id, created_at);
 ```
 
 `llm_calls` is both the **cost ledger** and the **idempotency store**. A row with
 `cached=false` is a real billed provider call and holds the response; a row with
 `cached=true` is a replay, costs 0, and records that a retry was absorbed.
+
+Checksums are nullable because rows for migrations applied before `0003` have no digest that
+was observed at application time. The runner does not invent one retrospectively.
 
 ## `types.py`
 
@@ -141,7 +176,8 @@ class RunRecord:
     input: dict; output: Any | None
     budget_usd: Decimal | None; spent_usd: Decimal
     error_class: str | None; error_detail: str | None
-    attempt: int; failures: int; created_at: datetime; updated_at: datetime
+    attempt: int; failures: int; max_attempts: int
+    created_at: datetime; updated_at: datetime
 
 @dataclass(frozen=True)
 class StepRecord:
@@ -279,6 +315,12 @@ A hit writes a new `llm_calls` row with `cached=true, cost_usd=0` and returns th
 response. This is what makes "a crash between the API response and the DB commit does not
 bill you twice" true rather than aspirational.
 
+A billed row whose response has no usable string `text` is not a cache hit: serving it would
+turn corrupted or hand-edited state into a trusted checkpoint. The provider is called again.
+Because the unique billed-call identity already occupies that key, this exceptional recovery
+path repairs that one unusable row in place and *adds* the replacement call's cost to the
+existing cost. Valid ledger rows remain append-only, and spend never forgets either call.
+
 Two properties of that lookup are load-bearing and were each worth one money-losing bug:
 
 * **`ORDER BY created_at LIMIT 1` is only correct because each key holds at most one billed
@@ -325,8 +367,17 @@ def transaction(conn) -> Iterator[psycopg.Cursor]           # commit on exit, ro
 
 ## `migrate.py`
 
-Applies `migrations/*.sql` in filename order inside a transaction each, recording the
-filename stem in `schema_migrations`. Idempotent — re-running is a no-op.
+Applies `migrations/*.sql` in filename order, with one transaction per file, recording the
+filename stem in `schema_migrations`. A session-level Postgres advisory lock covers the whole
+operation so concurrent starters cannot apply the same migration. Once `0003` has added the
+column, newly applied migrations also record the SHA-256 of their SQL; a non-null recorded
+checksum that differs from the file is a hard error. Pre-`0003` rows remain null because no
+digest was observed when they were applied. A database version absent from the checkout is a
+warning that the database may be ahead.
+
+Migration lookup checks, in order, `LLMRUN_MIGRATIONS_DIR`, the files bundled inside an
+installed wheel, and the repository-level `migrations/` directory for source checkouts.
+Re-running against an up-to-date database is a no-op.
 `def migrate(conn, migrations_dir: Path | None = None) -> list[str]` returns applied versions.
 
 ## `registry.py`
@@ -381,9 +432,16 @@ class RunContext:
 2. `SELECT` the `steps` row. If it exists with `status='succeeded'` **and** `input_hash = h`,
    return its stored `output` without executing — **this is resumption**.
    If it exists with a *different* hash, the inputs changed: re-execute and overwrite.
-3. Otherwise upsert `status='running'`, run `fn`, then commit `status='succeeded'` with the
-   JSON-serialised output. **Commit before returning** — an uncommitted step is a lost step.
-4. On exception: record `error_class`/`error_detail`, mark `failed`, re-raise.
+3. Otherwise, verify this context still owns the run, renew `locked_at`, and upsert
+   `status='running'` in the same transaction. Run `fn`, then verify ownership and renew the
+   lease again while committing `status='succeeded'` with the JSON-serialised output.
+   **Commit before returning** — an uncommitted step is a lost step.
+4. On exception: verify ownership without renewing the lease, record
+   `error_class`/`error_detail`, mark `failed`, and re-raise. A failure is not progress.
+
+These checkpoint transactions renew a lease on forward progress; there is no background
+heartbeat while a step body is running. `lease_seconds` must therefore exceed the slowest
+single step, even when a multi-step run lasts much longer than one lease period.
 
 ### `llm()` semantics
 
@@ -473,10 +531,13 @@ Real adapter, lazily importing the `anthropic` SDK (optional extra). Default mod
 Claim with a lease so a killed worker's run is reclaimed rather than stranded:
 
 ```sql
-UPDATE runs SET status='running', locked_by=%s, locked_at=now(), attempt=attempt+1, updated_at=now()
+UPDATE runs
+SET status='running', locked_by=%s, locked_at=now(), attempt=attempt+1,
+    next_attempt_at=NULL, updated_at=now()
 WHERE id = (
     SELECT id FROM runs
     WHERE attempt < max_attempts
+      AND (next_attempt_at IS NULL OR next_attempt_at <= now())
       AND (status='queued'
            OR (status='running' AND locked_at < now() - make_interval(secs => %s)))
     ORDER BY created_at
@@ -490,17 +551,20 @@ RETURNING *;
 say what it does not do: it prevents two workers taking the same row in the same instant, not
 two workers executing the same run because a lease expired while its holder was still
 working. That case is handled by the fencing check in `context.py` step 3, plus the ledger
-re-read behind the same lock.
+re-read behind the same lock. Starting and successfully checkpointing a step also renew the
+lease, so a run making visible progress is not stolen merely because its total duration exceeds
+one lease period. There is deliberately no timer heartbeat during a step body.
 
 `attempt < max_attempts` is the ceiling on **executions**, and it has to be enforced here
 because a SIGKILLed worker never reaches the code that writes a verdict. A companion sweep,
-run before each claim, moves any run past the ceiling whose lease has also expired to
-`failed` with `error_class='permanent'` — otherwise it is stranded in `running` forever,
-unclaimable and indistinguishable from work in progress.
+run by default for direct `run_once` calls and once per 60-second sweep interval in `run_forever`,
+moves a queued run at its ceiling, or a running run at its ceiling whose lease has expired, to
+`failed` with `error_class='permanent'`. Otherwise those rows are unclaimable but still look
+like work in progress. The sweep is capped at 100 rows per transaction.
 
 ```python
 def run_once(conn, *, worker_id: str, lease_seconds: int = 60, provider: Provider,
-             default_model: str | None = None) -> UUID | None
+             default_model: str | None = None, sweep: bool = True) -> UUID | None
 def run_forever(conn, *, provider: Provider, poll_interval: float = 1.0, ...) -> None
 ```
 
@@ -509,10 +573,12 @@ SIGTERM the loop finishes the run it holds, writes the verdict, and returns so t
 can close the connection — and a function that handles SIGTERM properly is by construction
 a function that returns.
 
-On completion: `succeeded` + output. On exception: classify, consult `DISPOSITIONS`. If
-retryable and `failures + 1 < max_attempts`, return the run to `queued`; otherwise set the
-disposition's terminal status and record `error_class`/`error_detail`. Handle SIGTERM
-gracefully (finish the current run, then exit); SIGKILL is what the chaos test uses.
+On completion: `succeeded` + output. On exception: classify, consult `DISPOSITIONS`. A
+retryable run is returned to `queued` with a jittered `next_attempt_at` only if another failure
+is allowed by the disposition, the run's stored ceiling, and the currently registered
+pipeline; the lowest limit wins. Otherwise set the disposition's terminal status and record
+`error_class`/`error_detail`. Handle SIGTERM gracefully (finish the current run, then exit);
+SIGKILL is what the chaos test uses.
 
 **Two counters, because one cannot do both jobs.** `attempt` counts claims and is
 incremented by the claim query, so it bounds executions even when nothing survives to
@@ -527,13 +593,16 @@ having never been retried once.
 ```
 llmrun migrate
 llmrun worker [--once] [--import MODULE] [--provider echo|anthropic] [--lease-seconds N]
+              [--poll-interval SECONDS] [--model MODEL] [--worker-id ID]
 llmrun enqueue PIPELINE --tenant T --json '{"thread_id": "t1"}' [--import MODULE]
 llmrun runs list [--tenant T] [--status S] [--limit N]
 llmrun runs show RUN_ID          # run header, step table, per-call cost ledger
-llmrun costs [--tenant T]        # spend grouped by pipeline and model, incl. cache savings
+llmrun costs [--tenant T] [--since WHEN] [--until WHEN]
+llmrun health                    # database reachability, migrations, queue and stranded work
 ```
 
 `runs show` is the demo's money shot — it must clearly display which calls were cached.
+`costs` defaults to the most recent 30 days; `--since` is inclusive and `--until` exclusive.
 
 ## `examples/summarise_thread.py`
 
@@ -580,8 +649,9 @@ if Postgres is unreachable** rather than erroring.
   prompt must re-execute rather than replay the previous instruction's answer
 - `test_worker.py` — the claim ceiling bounds executions; the sweep fails a run stranded
   past it (but not one still inside its lease); lease churn does not spend the retry
-  budget; a worker whose lease was stolen stops spending; two overlapping workers on two
-  connections bill one call, not two
+  budget; checkpoint progress renews the lease; a worker whose lease was stolen stops
+  spending or overwriting checkpoints; two overlapping workers on two connections bill one
+  call, not two
 - `chaos/test_crash_resume.py` — **the credibility centrepiece**:
   1. run the 12-step example uninterrupted and record its output and billed-call count —
      the baseline — then reset the tables and enqueue the same work again
@@ -611,10 +681,19 @@ if Postgres is unreachable** rather than erroring.
 `fmt` · `lint` · `clean`. `make demo` must work from a clean clone with only Docker and uv
 installed, and must end by printing `llmrun runs show` output.
 
+## CI
+
+The workflow checks the lockfile, Ruff lint and formatting, migrations, and the full suite
+including chaos on Python 3.11, 3.12, and 3.13 against Postgres 17. Separate jobs validate the
+optional Anthropic SDK surface without a paid call, audit all locked dependencies, and build
+both distribution formats. The package job installs the built wheel outside the checkout and
+runs its bundled migrations against a clean Postgres service before calling `llmrun health`.
+
 ## docker-compose.yml
 
-Postgres 17, host port **55432** (avoid colliding with a local 5432), user/pass/db all
-`llmrun`, named volume, `pg_isready` healthcheck.
+Postgres 17, host port **55432** bound to `127.0.0.1` (avoid colliding with a local 5432 without
+exposing cleartext development prompts on the network), user/pass/db all `llmrun`, named
+volume, `pg_isready` healthcheck.
 
 ## Conventions
 

@@ -56,7 +56,8 @@ $ make demo
 ==> applying migrations
 applied 0001_initial
 applied 0002_attempt_ceiling
-2 migration(s) applied
+applied 0003_integrity_and_pacing
+3 migration(s) applied
 
 ==> enqueueing summarise_thread for tenant demo
 ==> queued run 8d1f8f6d-b7d8-401f-b132-c68b8cd19257
@@ -122,7 +123,7 @@ session header come first and are cut here. The duration is machine-dependent.*<
 $ make chaos
 tests/chaos/test_crash_resume.py::test_a_sigkilled_worker_resumes_without_paying_twice PASSED [100%]
 
-====================== 1 passed, 116 deselected in 9.54s =======================
+====================== 1 passed, 187 deselected in 11.75s ======================
 ```
 
 What that test actually does:
@@ -331,12 +332,15 @@ human" is a first-class outcome rather than an exception you invent.
 
 ### 4. Cost accounting — LLM cost tracking per tenant
 
-Every billed call writes a row: model, tokens in, tokens out, cost, and the response. Nothing is
-ever updated or deleted, so `SUM(cost_usd)` is the authoritative answer to "what did this run
-cost" rather than a derived guess. Money is `decimal.Decimal` end to end, quantised to six
-decimal places with `ROUND_HALF_UP` to match the `numeric(12,6)` columns — never `float`. Not
-pedantry: those costs are summed thousands of times into an accumulator that a budget is then
-compared against, and binary rounding error in that accumulator does not stay small.
+Every billed call records its model, tokens in, tokens out, cost, and response. Valid ledger rows
+are never updated or deleted, so `SUM(cost_usd)` is the authoritative answer to "what did this
+run cost" rather than a derived guess. There is one defensive recovery path: if an existing
+billed row has no usable response text, llmrun buys a replacement, repairs that unusable row in
+place, and adds the new cost to the old one. The total still accounts for both payments. Money is
+`decimal.Decimal` end to end, quantised to six decimal places with `ROUND_HALF_UP` to match the
+`numeric(12,6)` columns — never `float`. Not pedantry: those costs are summed thousands of times
+into an accumulator that a budget is then compared against, and binary rounding error in that
+accumulator does not stay small.
 
 Because every row carries `run_id` and every run carries `tenant_id`, attributing spend to a
 tenant is a `GROUP BY` rather than a project:
@@ -456,7 +460,7 @@ Four tables. If a fifth were needed, the scope crept.
 | `runs` | pipeline execution | the unit of work a worker claims; holds the budget, the running spend, the terminal status and the lease |
 | `steps` | named step of a run | the resumption checkpoint: stored output plus the `input_hash` that proves the output still matches its inputs |
 | `llm_calls` | provider call *and* replay | the cost ledger and the idempotency store, at once |
-| `schema_migrations` | applied migration | plain filename bookkeeping so `llmrun migrate` is idempotent |
+| `schema_migrations` | applied migration | version and, when observed at apply time, SQL checksum; makes migration runs idempotent and detects edited files |
 
 **Why `llm_calls` is both ledger and idempotency store.** These are usually built as two systems:
 a spend table for finance, and a response cache keyed by request hash for retries. Keeping them
@@ -464,17 +468,20 @@ as one table removes the failure mode where they disagree. A row with `cached=fa
 billed call — it carries the true cost and the stored response, and it is written in the same
 transaction as the spend it caused. A row with `cached=true` is a replay: it costs zero, and it
 exists purely to record that a retry was *absorbed* rather than paid for a second time. So "what
-did this cost" and "have I already made this call" are answered by the same append-only rows,
+did this cost" and "have I already made this call" are answered by the same ledger rows,
 and there is no reconciliation job, no cache that can be warm while the ledger is cold, and no
 way to serve a cached response without leaving evidence that you did.
 
 **How work is claimed.** One SQL statement, no broker, no scheduler process:
 
 ```sql
-UPDATE runs SET status='running', locked_by=%s, locked_at=now(), attempt=attempt+1
+UPDATE runs
+SET status='running', locked_by=%s, locked_at=now(), attempt=attempt+1,
+    next_attempt_at=NULL, updated_at=now()
 WHERE id = (
     SELECT id FROM runs
     WHERE attempt < max_attempts
+      AND (next_attempt_at IS NULL OR next_attempt_at <= now())
       AND (status='queued'
            OR (status='running' AND locked_at < now() - make_interval(secs => %s)))
     ORDER BY created_at
@@ -493,9 +500,10 @@ head-of-queue row and your pool has an effective concurrency of one.
 
 `attempt < max_attempts` is the ceiling on executions, and it has to live here: a SIGKILLed
 worker never reaches the code that writes a verdict, so a run that reliably kills its worker
-would otherwise be re-claimed forever. A sweep run before each claim moves any run past the
-ceiling whose lease has also expired to `failed`, rather than leaving it stranded in `running`
-where it reads as work in progress.
+would otherwise be re-claimed forever. Direct `run_once` calls sweep before claiming by default;
+`run_forever` performs the same sweep once per 60-second interval rather than adding a write
+transaction to every poll. It fails queued runs at their ceiling and running runs at their
+ceiling once their lease expires, instead of leaving unclaimable work looking active forever.
 
 Note what the lease is *not*: it is not proof the first worker is dead, only that it has been
 quiet for longer than the lease. `SKIP LOCKED` stops two workers claiming the same row in the
@@ -505,6 +513,10 @@ under the row lock it is about to spend behind, and abandons the run if the leas
 and it re-reads the `llm_calls` ledger under that same lock, so a worker that queued behind
 another one replays its answer instead of buying a second copy. Neither is a substitute for the
 checkpoints and the ledger — they are what make an overlap cost nothing rather than cost double.
+Step-start and successful-checkpoint transactions also fence their writes and renew `locked_at`,
+so a multi-step run that keeps making progress may safely last longer than one lease period.
+There is no timer heartbeat inside a step body, so the lease still has to exceed the slowest
+single step.
 
 Every SQL statement in the codebase is parameterised. There is no f-string SQL anywhere.
 
@@ -546,8 +558,8 @@ their runbook, and who already have a Postgres.
 
 - Python 3.11 or newer
 - Postgres 13 or newer (the schema uses built-in `gen_random_uuid()`, so `pgcrypto` is not
-  required). `docker-compose.yml` ships Postgres 17 on host port **55432** to avoid colliding
-  with a local 5432.
+  required). `docker-compose.yml` ships Postgres 17 on `127.0.0.1:55432` to avoid colliding
+  with a local 5432 without exposing the development ledger on the network.
 - Docker and [uv](https://docs.astral.sh/uv/) for the `make` targets. Neither is required to use
   the library — they are how the demo and tests get a database.
 
@@ -644,22 +656,24 @@ discrepancy would surface as an invoice.
 
 | command | what it does |
 |---|---|
-| `llmrun migrate` | apply `migrations/*.sql` in filename order, idempotently |
-| `llmrun worker [--once] [--import M] [--provider echo\|anthropic] [--lease-seconds N]` | claim and execute runs; `SIGTERM` finishes the current run and exits |
+| `llmrun migrate [--migrations-dir DIR]` | apply SQL migrations in filename order, verify recorded checksums, and exit idempotently |
+| `llmrun worker [--once] [--import M] [--provider echo\|anthropic] [--lease-seconds N] [--poll-interval S] [--model M] [--worker-id ID]` | claim and execute runs; `SIGTERM` finishes the current run and exits |
 | `llmrun enqueue PIPELINE --tenant T --json '{"thread_id": "t1"}' [--import M]` | queue a run, print its id |
 | `llmrun runs list [--tenant T] [--status S] [--limit N]` | recent runs and their statuses |
 | `llmrun runs show RUN_ID` | run header, step table, per-call cost ledger with the `cached` column; `RUN_ID` may be any unambiguous prefix |
-| `llmrun costs [--tenant T]` | spend grouped by pipeline and model, including cache savings |
+| `llmrun costs [--tenant T] [--since WHEN] [--until WHEN]` | spend grouped by pipeline and model, including cache savings; defaults to the last 30 days |
+| `llmrun health` | check database reachability and report migrations, queue depth, running work, and stranded runs |
 
 Pipelines are registered by importing the module that defines them, which is what `--import`
 does; it accepts a dotted path or a file path.
 
 ## Status
 
-**v0.1.** CI runs lint plus the *full* suite on every push — including the crash test, against a
-real Postgres service container, with no `-m "not chaos"` escape hatch. That is deliberate: the
-no-double-billing assertion is the claim this repository exists to make, so it is not allowed to
-be optional. What is not built yet, stated plainly:
+**v0.1.** The CI workflow runs lint plus the *full* suite on every push — including the crash
+test, against a real Postgres service container, with no `-m "not chaos"` escape hatch. It also
+builds both distribution formats and installs the wheel outside the checkout to prove its
+bundled migrations work. The no-double-billing assertion is the claim this repository exists to
+make, so it is not optional. What is not built yet, stated plainly:
 
 - **Not published to PyPI.** Install from a checkout.
 - **Two provider adapters only**, by design. No OpenAI, Gemini, Bedrock or Vertex adapter. The
@@ -669,18 +683,18 @@ be optional. What is not built yet, stated plainly:
   reporting-only today (`llmrun costs`); there is no rolling tenant cap that refuses to enqueue.
 - **Steps within a run are sequential.** Concurrency comes from running multiple workers across
   runs. There is no fan-out primitive.
-- **Leases are not renewed mid-run.** A single step that legitimately runs longer than
-  `--lease-seconds` can have its run re-claimed by another worker while it is still working.
+- **Leases renew on checkpoint progress, not on a timer.** Starting and successfully finishing a
+  step refreshes the lease, so an active multi-step run can exceed one lease period. A single
+  step that takes longer than `--lease-seconds` can still be reclaimed while it is working.
   That overlap does not double-bill — the ledger is re-read under the run's row lock, and the
   displaced worker stops when it sees the lease has moved — but the in-flight step may still be
   *executed* twice, so any side effect outside Postgres happens twice. Set the lease above your
   slowest step.
 - **No metrics exporter, no tracing, no web UI.** Levelled logging under `llmrun.*` loggers —
-  plain human-readable lines to stderr, with the run id written into the message text so one
-  run can be grepped out of a busy worker's output — and SQL. Not structured: no JSON, no
-  key/value fields, and the timestamps carry local time only, so a log pipeline has nothing to
-  index and correlating across days means adding your own handler. That is the whole
-  observability story at v0.1.
+  human-readable lines to stderr with an ISO-8601 UTC timestamp, process id, logger name, and the
+  run id in run-specific messages — and SQL. The lines are still not JSON and there is no event
+  schema, metrics endpoint, or trace context, so richer correlation requires adding your own
+  handler. That is the whole observability story at v0.1.
 - **The price table is a placeholder.** See above.
 - **Python and Postgres only.** No SQLite fallback, no MySQL.
 

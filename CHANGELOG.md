@@ -58,6 +58,9 @@ breaking changes below are recorded for anyone tracking `main` rather than a tag
   `runs`, `steps` and `llm_calls` covering statuses, error classes, non-negative money and
   token counters, and the rule that a cached call costs zero.
 - **Provider latency.** `llm_calls.duration_ms` records how long each provider call took.
+- **Built-package CI gate.** CI now builds the wheel and source distribution, installs the
+  wheel outside the checkout, applies its bundled migrations to a clean Postgres service, and
+  runs `llmrun health`. This catches source-only files that an editable checkout can hide.
 - **`Provider`, `get_provider`, `Price` and `register_price` are now part of the top-level
   facade.** Writing a custom provider and correcting the placeholder price table are ordinary
   configuration, so they belong inside the stability promise. `import llmrun` still pulls in
@@ -66,6 +69,9 @@ breaking changes below are recorded for anyone tracking `main` rather than a tag
 
 ### Fixed
 
+- **The binding design and README describe the implementation that ships.** They now include
+  migration `0003`, checksums, retry pacing, database constraints, progress-based lease renewal,
+  the current CLI surface, UTC log metadata, and the loopback-only development database bind.
 - **`enqueue` rejects NaN and Infinity.** `pipeline._encode_input` passes `allow_nan=False`,
   so a `float("nan")` argument raises `TypeError` at the call site — as the function's
   docstring already promised — instead of emitting the bare token `NaN`, which is not JSON,

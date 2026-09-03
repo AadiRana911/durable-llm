@@ -32,12 +32,12 @@ from typing import TYPE_CHECKING, Any
 
 import pytest
 
-from llmrun.context import RunContext
-from llmrun.db import connect, transaction
-from llmrun.errors import PermanentError, TransientError
-from llmrun.pipeline import pipeline
-from llmrun.providers.echo import EchoProvider
-from llmrun.worker import run_once, validate_worker_timings
+from durable_llm.context import RunContext
+from durable_llm.db import connect, transaction
+from durable_llm.errors import PermanentError, TransientError
+from durable_llm.pipeline import pipeline
+from durable_llm.providers.echo import EchoProvider
+from durable_llm.worker import run_once, validate_worker_timings
 
 if TYPE_CHECKING:
     from uuid import UUID
@@ -46,7 +46,7 @@ if TYPE_CHECKING:
     from psycopg.rows import DictRow
 
     from conftest import Database
-    from llmrun.types import LLMResult
+    from durable_llm.types import LLMResult
 
 WORKER_ID = "test-worker"
 
@@ -182,7 +182,7 @@ def _counters(db: Database, run_id: Any) -> tuple[int, int, str]:
 def _lease(db: Database, run_id: Any) -> tuple[str | None, datetime | None]:
     """``(locked_by, locked_at)`` — the two columns that *are* the lease.
 
-    Read with SQL rather than through :class:`~llmrun.types.RunRecord`, which deliberately
+    Read with SQL rather than through :class:`~durable_llm.types.RunRecord`, which deliberately
     drops both: they are the worker's bookkeeping, not part of a run's public shape.
     """
     with transaction(db.conn) as cur:
@@ -240,7 +240,7 @@ def test_a_run_stranded_past_its_ceiling_is_failed_rather_than_left_running(
     """The companion sweep. A run nothing can claim must not read as work in progress.
 
     Without it the ceiling above trades an infinite loop for an invisible one: the row sits
-    in ``running`` forever, indistinguishable in ``llmrun runs list`` from a run a worker is
+    in ``running`` forever, indistinguishable in ``durable-llm runs list`` from a run a worker is
     still busy with, and no status ever explains why nothing is happening.
     """
     run_id = flaky_pipeline.enqueue(tenant_id="worker", conn=db.conn, name="alpha")

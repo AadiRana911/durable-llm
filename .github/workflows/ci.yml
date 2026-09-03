@@ -41,9 +41,9 @@ jobs:
       postgres:
         image: postgres:17
         env:
-          POSTGRES_USER: llmrun
-          POSTGRES_PASSWORD: llmrun
-          POSTGRES_DB: llmrun
+          POSTGRES_USER: durable_llm
+          POSTGRES_PASSWORD: durable_llm
+          POSTGRES_DB: durable_llm
           # Matches docker-compose.yml. Deterministic collation so ORDER BY in `runs list`
           # sorts identically here and on a developer's machine -- a gate that runs under a
           # different collation than the documented dev environment is the one place least
@@ -53,7 +53,7 @@ jobs:
           - 5432:5432
         # The job does not start until this reports healthy, so no sleep is needed below.
         options: >-
-          --health-cmd "pg_isready -q -h 127.0.0.1 -p 5432 -U llmrun -d llmrun"
+          --health-cmd "pg_isready -q -h 127.0.0.1 -p 5432 -U durable_llm -d durable_llm"
           --health-interval 2s
           --health-timeout 3s
           --health-retries 30
@@ -61,8 +61,8 @@ jobs:
 
     env:
       # Service containers are published on localhost for jobs running on the runner host.
-      LLMRUN_DATABASE_URL: postgresql://llmrun:llmrun@localhost:5432/llmrun
-      LLMRUN_PROVIDER: echo
+      DURABLE_LLM_DATABASE_URL: postgresql://durable_llm:durable_llm@localhost:5432/durable_llm
+      DURABLE_LLM_PROVIDER: echo
       # So `examples/` is importable by dotted name from worker subprocesses.
       PYTHONPATH: ${{ github.workspace }}
 
@@ -97,7 +97,7 @@ jobs:
         run: uv run --frozen ruff format --check .
 
       - name: Apply migrations
-        run: uv run --frozen llmrun migrate
+        run: uv run --frozen durable-llm migrate
 
       # No `-m "not chaos"` here on purpose: CI is the one place the crash-and-resume
       # suite must always run, because it is the proof that retries do not double-bill.
@@ -118,21 +118,21 @@ jobs:
       postgres:
         image: postgres:17
         env:
-          POSTGRES_USER: llmrun
-          POSTGRES_PASSWORD: llmrun
-          POSTGRES_DB: llmrun
+          POSTGRES_USER: durable_llm
+          POSTGRES_PASSWORD: durable_llm
+          POSTGRES_DB: durable_llm
           POSTGRES_INITDB_ARGS: "--encoding=UTF8 --locale=C"
         ports:
           - 5432:5432
         options: >-
-          --health-cmd "pg_isready -q -h 127.0.0.1 -p 5432 -U llmrun -d llmrun"
+          --health-cmd "pg_isready -q -h 127.0.0.1 -p 5432 -U durable_llm -d durable_llm"
           --health-interval 2s
           --health-timeout 3s
           --health-retries 30
           --health-start-period 5s
 
     env:
-      LLMRUN_DATABASE_URL: postgresql://llmrun:llmrun@localhost:5432/llmrun
+      DURABLE_LLM_DATABASE_URL: postgresql://durable_llm:durable_llm@localhost:5432/durable_llm
 
     steps:
       - name: Checkout
@@ -165,19 +165,19 @@ jobs:
             exit 1
           fi
 
-          smoke_dir="$RUNNER_TEMP/llmrun-wheel-smoke"
+          smoke_dir="$RUNNER_TEMP/durable-llm-wheel-smoke"
           uv venv --python 3.12 "$smoke_dir"
           uv pip install --python "$smoke_dir/bin/python" "${wheels[0]}"
 
           cd "$RUNNER_TEMP"
-          "$smoke_dir/bin/llmrun" migrate
-          "$smoke_dir/bin/llmrun" health
+          "$smoke_dir/bin/durable-llm" migrate
+          "$smoke_dir/bin/durable-llm" health
           "$smoke_dir/bin/python" - <<'PY'
           import os
 
           import psycopg
 
-          from llmrun.migrate import default_migrations_dir
+          from durable_llm.migrate import default_migrations_dir
 
           expected = [
               "0001_initial",
@@ -190,7 +190,7 @@ jobs:
                   f"installed wheel bundled migrations {bundled!r}, expected {expected!r}"
               )
 
-          with psycopg.connect(os.environ["LLMRUN_DATABASE_URL"]) as conn:
+          with psycopg.connect(os.environ["DURABLE_LLM_DATABASE_URL"]) as conn:
               rows = conn.execute(
                   "SELECT version, checksum FROM schema_migrations ORDER BY version"
               ).fetchall()
@@ -252,7 +252,7 @@ jobs:
           import anthropic
 
           # A literal copy of `Anthropic` + `_TRANSIENT_EXCEPTION_NAMES` from
-          # src/llmrun/providers/anthropic.py, and deliberately not an import of them.
+          # src/durable_llm/providers/anthropic.py, and deliberately not an import of them.
           # Importing the adapter's own tuple would make this job agree with the code no
           # matter what either side renamed; the point is to hold the code to a fixed claim.
           CLIENT = "Anthropic"
@@ -287,7 +287,7 @@ jobs:
           if missing:
               raise SystemExit(
                   f"anthropic {anthropic.__version__} is missing names that "
-                  f"llmrun.providers.anthropic resolves at runtime: {', '.join(missing)}. "
+                  f"durable_llm.providers.anthropic resolves at runtime: {', '.join(missing)}. "
                   "Error classification has silently degraded to the status-code backstop; "
                   "fix the adapter and raise the floor in pyproject.toml."
               )
@@ -322,7 +322,7 @@ jobs:
       #
       # --all-extras: `anthropic` is optional to install, not optional to keep patched, and
       #   it drags in httpx/pydantic/anyio -- by far the largest CVE surface in the tree.
-      # --no-emit-project: drops the self-referencing `llmrun` entry, which pip-audit would
+      # --no-emit-project: drops the self-referencing `durable-llm` entry, which pip-audit would
       #   try and fail to look up on PyPI (the package is unpublished).
       # No --ignore-vuln list on purpose. The tree is clean today, so the first entry here
       # would be a decision someone made under deadline pressure; make them add it visibly.

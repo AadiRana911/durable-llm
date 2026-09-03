@@ -28,8 +28,8 @@ from typing import Final
 
 import pytest
 
-from llmrun import cost as cost_module
-from llmrun.cost import PRICES, Price, cost_of, quantize_usd, register_price
+from durable_llm import cost as cost_module
+from durable_llm.cost import PRICES, Price, cost_of, quantize_usd, register_price
 
 #: A model name no seeded price can collide with.
 FAKE_MODEL: Final[str] = "test-only-model"

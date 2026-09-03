@@ -28,7 +28,7 @@ the ``llm_calls`` row and the updated spend, which serialises budget checks for 
 without serialising anything else.
 
 The helpers here expect a connection whose cursors yield mappings, i.e. the ``dict_row``
-factory configured by ``llmrun.db.connect()``.
+factory configured by ``durable_llm.db.connect()``.
 """
 
 from __future__ import annotations
@@ -38,9 +38,9 @@ from decimal import Decimal
 from typing import TYPE_CHECKING, Final
 from uuid import UUID
 
-from llmrun.cost import cost_of, quantize_usd
-from llmrun.errors import BudgetExceededError, PermanentError
-from llmrun.types import as_decimal, as_decimal_or_zero
+from durable_llm.cost import cost_of, quantize_usd
+from durable_llm.errors import BudgetExceededError, PermanentError
+from durable_llm.types import as_decimal, as_decimal_or_zero
 
 if TYPE_CHECKING:  # pragma: no cover - typing only, keeps this module importable bare
     import psycopg
@@ -48,7 +48,7 @@ if TYPE_CHECKING:  # pragma: no cover - typing only, keeps this module importabl
 
 __all__ = ["budget_overrun", "check_budget", "project_cost", "record_spend"]
 
-logger = logging.getLogger("llmrun.budget")
+logger = logging.getLogger("durable_llm.budget")
 
 #: Rule-of-thumb characters per token used to project input size without tokenising.
 #: Roughly right for English prose and cheap to compute; the projection is a pre-flight
@@ -94,7 +94,7 @@ def project_cost(model: str, prompt_chars: int, max_tokens: int) -> Decimal:
     purpose: a budget guard that under-projects is a budget guard that lets the overrun
     through.
 
-    Raises ``KeyError`` (from :func:`llmrun.cost.cost_of`) for an unpriced model, so an
+    Raises ``KeyError`` (from :func:`durable_llm.cost.cost_of`) for an unpriced model, so an
     unknown model is caught before the call rather than after it.
     """
     if prompt_chars < 0:
@@ -112,7 +112,7 @@ def check_budget(conn: psycopg.Connection[DictRow], run_id: UUID, projected: Dec
     """Refuse the call if ``projected`` would push the run past its cap.
 
     Locks the run row for the duration of the caller's transaction and raises
-    :class:`~llmrun.errors.BudgetExceededError` when ``spent + projected > budget``. A
+    :class:`~durable_llm.errors.BudgetExceededError` when ``spent + projected > budget``. A
     ``NULL`` budget means unlimited.
 
     The comparison is strictly greater-than, so a projection that lands exactly on the cap

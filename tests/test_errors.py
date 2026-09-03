@@ -27,7 +27,7 @@ what a repair prompt may quote back are all written to handle something that is 
 supposed to happen. Nothing in the rest of the suite executes any of them, which makes them
 the easiest code in the library to invert by accident: flip the fallback and every call from
 a provider reporting a dated snapshot silently prices at zero, and a budget that stops
-counting is worse than no budget at all. They live here because each one is about how llmrun
+counting is worse than no budget at all. They live here because each one is about how durable_llm
 behaves when something has already gone wrong — the same question the taxonomy above
 answers, one layer down. They need a real Postgres, like everything else in this suite.
 """
@@ -41,12 +41,12 @@ from typing import TYPE_CHECKING, Any
 
 import pytest
 
-from llmrun import context
-from llmrun.cache import input_hash
-from llmrun.context import RunContext
-from llmrun.cost import PRICES, cost_of
-from llmrun.db import transaction
-from llmrun.errors import (
+from durable_llm import context
+from durable_llm.cache import input_hash
+from durable_llm.context import RunContext
+from durable_llm.cost import PRICES, cost_of
+from durable_llm.db import transaction
+from durable_llm.errors import (
     DISPOSITIONS,
     MAX_BACKOFF_SECONDS,
     BudgetExceededError,
@@ -60,7 +60,7 @@ from llmrun.errors import (
     backoff_delay,
     classify,
 )
-from llmrun.types import RUN_STATUSES, LLMResult
+from durable_llm.types import RUN_STATUSES, LLMResult
 
 if TYPE_CHECKING:
     from conftest import Database
@@ -91,7 +91,7 @@ CONTRACT_TABLE = {
         (PermanentError("bad argument"), ErrorClass.PERMANENT),
     ],
 )
-def test_classify_maps_each_llmrun_error_to_its_class(
+def test_classify_maps_each_durable_llm_error_to_its_class(
     exception: LLMRunError, expected: ErrorClass
 ) -> None:
     assert classify(exception) == expected
@@ -122,7 +122,7 @@ def test_base_exceptions_are_permanent_too() -> None:
     assert classify(KeyboardInterrupt()) == ErrorClass.PERMANENT
 
 
-def test_every_error_is_an_llmrun_error() -> None:
+def test_every_error_is_an_durable_llm_error() -> None:
     for error_type in (
         TransientError,
         MalformedOutputError,

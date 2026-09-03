@@ -6,7 +6,7 @@ about what it does and does not demonstrate.
 **The experiment.** Run the twelve-step example cleanly once and record two things: the
 output, and how many *billed* provider calls it took (``llm_calls`` rows with
 ``cached = false``). Then wipe the tables, enqueue the same work again, start a real
-``llmrun worker`` subprocess, wait until roughly half the steps have committed, and
+``durable-llm worker`` subprocess, wait until roughly half the steps have committed, and
 ``SIGKILL`` its process group. Not ``terminate()``, not a graceful shutdown, not a
 context manager that gets a chance to clean up — signal 9 to the group, which is what an
 OOM killer, a spot-instance reclaim and ``kubectl delete pod --force`` all look like from
@@ -22,7 +22,7 @@ every model call, and neither failure is visible anywhere except the invoice.
 returning a response and the transaction recording it committing. A kill landing exactly
 there loses the record of a call the vendor has already billed, and the resumed run makes
 it again. No amount of application code closes that window — it would need a distributed
-transaction with the vendor's billing system. llmrun shrinks it to a single round trip and
+transaction with the vendor's billing system. durable_llm shrinks it to a single round trip and
 is honest about the rest.
 
 The suite is POSIX-only (process groups, ``SIGKILL``) and marked ``chaos`` so ordinary
@@ -49,14 +49,14 @@ from uuid import UUID
 
 import pytest
 
-from llmrun.types import RunRecord
+from durable_llm.types import RunRecord
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterator, Mapping
 
     from conftest import Database
 
-logger = logging.getLogger("llmrun.tests.chaos")
+logger = logging.getLogger("durable_llm.tests.chaos")
 
 pytestmark = [
     pytest.mark.chaos,
@@ -86,7 +86,7 @@ LEASE_SECONDS = 2
 #: complete faster than another process can watch them and pull the trigger.
 #:
 #: It also sets how wide the window in :func:`_wait_for_crash_window` is: the example's
-#: schema validators pace too, and llmrun calls the validator twice between committing a
+#: schema validators pace too, and durable_llm calls the validator twice between committing a
 #: provider call and checkpointing its step, so the window is about twice this value. The
 #: SIGKILL has to land inside it, and the gap between observing the window and the signal
 #: arriving is a syscall — so a second of window against a millisecond of latency is a
@@ -101,9 +101,9 @@ CRASH_WINDOW_TIMEOUT = 180.0
 COMPLETION_TIMEOUT = 300.0
 SUBPROCESS_TIMEOUT = 600.0
 
-#: Last-resort CLI invocation if the console script is not on PATH; `llmrun.cli:main` is
+#: Last-resort CLI invocation if the console script is not on PATH; `durable_llm.cli:main` is
 #: the entry point the contract fixes, so this works even without an installed script.
-_CLI_BOOTSTRAP = "import sys; from llmrun.cli import main; sys.exit(main())"
+_CLI_BOOTSTRAP = "import sys; from durable_llm.cli import main; sys.exit(main())"
 
 
 # --------------------------------------------------------------------------------------
@@ -119,7 +119,9 @@ def _example() -> ModuleType:
     is (correctly) a ``ValueError``.
     """
     assert EXAMPLE_PATH.is_file(), f"the example pipeline is missing: {EXAMPLE_PATH}"
-    spec = importlib.util.spec_from_file_location("llmrun_example_summarise_thread", EXAMPLE_PATH)
+    spec = importlib.util.spec_from_file_location(
+        "durable_llm_example_summarise_thread", EXAMPLE_PATH
+    )
     assert spec is not None and spec.loader is not None
     module = importlib.util.module_from_spec(spec)
     sys.modules[spec.name] = module
@@ -128,17 +130,17 @@ def _example() -> ModuleType:
 
 
 def _cli(*args: str) -> list[str]:
-    """Build a command line for the ``llmrun`` CLI.
+    """Build a command line for the ``durable-llm`` CLI.
 
     Prefers the console script next to the running interpreter — the venv pytest is being
     run from — then anything on PATH, then the entry point directly. The point is that a
     developer running ``pytest`` outside ``make`` still gets a working chaos suite.
     """
-    local = Path(sys.executable).with_name("llmrun")
+    local = Path(sys.executable).with_name("durable-llm")
     if local.is_file() and os.access(local, os.X_OK):
         return [str(local), *args]
 
-    found = shutil.which("llmrun")
+    found = shutil.which("durable-llm")
     if found:
         return [found, *args]
 
@@ -148,8 +150,8 @@ def _cli(*args: str) -> list[str]:
 def _environment(database_url: str, *, pace_seconds: float) -> dict[str, str]:
     """Environment for a subprocess: same database, echo provider, no API key anywhere."""
     env = dict(os.environ)
-    env["LLMRUN_DATABASE_URL"] = database_url
-    env["LLMRUN_PROVIDER"] = "echo"
+    env["DURABLE_LLM_DATABASE_URL"] = database_url
+    env["DURABLE_LLM_PROVIDER"] = "echo"
     env[_example().PACE_ENV] = str(pace_seconds)
     # Belt and braces: --import takes a path, but a dotted fallback should also resolve.
     existing = env.get("PYTHONPATH", "")
@@ -180,7 +182,7 @@ def _enqueue(env: Mapping[str, str], db: Database, tenant: str) -> UUID:
     """Queue one run through the CLI and read its id back out of the database.
 
     Reading the id from ``runs`` rather than parsing the CLI's stdout keeps this test
-    independent of how ``llmrun enqueue`` formats its output — that is the CLI's business,
+    independent of how ``durable-llm enqueue`` formats its output — that is the CLI's business,
     and not what is under test here.
     """
     _run_cli(
@@ -195,14 +197,14 @@ def _enqueue(env: Mapping[str, str], db: Database, tenant: str) -> UUID:
             EXAMPLE_IMPORT_ARG,
         ],
         env,
-        what="llmrun enqueue",
+        what="durable-llm enqueue",
     )
     return db.latest_run_id(tenant)
 
 
 @contextmanager
 def _worker(env: Mapping[str, str], log_path: Path) -> Iterator[subprocess.Popen[str]]:
-    """Start ``llmrun worker`` in its own process group, and guarantee it is gone after.
+    """Start ``durable-llm worker`` in its own process group, and guarantee it is gone after.
 
     ``start_new_session=True`` is what makes the group killable as a unit — signalling only
     the direct child would be a gentler experiment than the one this test claims to run.
@@ -354,7 +356,7 @@ def test_a_sigkilled_worker_resumes_without_paying_twice(
             str(LEASE_SECONDS),
         ],
         quiet_env,
-        what="llmrun worker --once (baseline)",
+        what="durable-llm worker --once (baseline)",
     )
 
     baseline = db.run(baseline_run_id)

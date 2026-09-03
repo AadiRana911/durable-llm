@@ -1,8 +1,8 @@
-# llmrun
+# durable-llm
 
 ## Purpose and authority
 
-`llmrun` is a small Python library and CLI for crash-safe, budget-capped,
+`durable-llm` is a small Python library and CLI for crash-safe, budget-capped,
 idempotent multi-step LLM pipelines with all durable state in PostgreSQL. A
 worker may be killed and resumed without re-running completed steps or rebilling
 a provider call already present in the ledger.
@@ -20,11 +20,11 @@ agent framework, prompt-management layer, web UI, ORM, or Alembic.
 - The CLI uses stdlib `argparse`; do not add Click or Typer.
 - PostgreSQL 17 is the state store; SQL migrations are additive numbered files
   in `migrations/` and are copied into the built wheel.
-- `src/llmrun/`: public types/errors, cost/cache/budget logic, database and
+- `src/durable_llm/`: public types/errors, cost/cache/budget logic, database and
   migration code, registry/pipeline/context/worker/CLI, and provider adapters.
 - `examples/`: registered runnable pipelines. `tests/`: unit, integration, CLI,
   provider-contract, and `tests/chaos/` crash-resume coverage.
-- `src/llmrun/__init__.py` defines the public import surface; preserve
+- `src/durable_llm/__init__.py` defines the public import surface; preserve
   `py.typed` and update `CHANGELOG.md` for user-visible API behavior.
 
 ## Setup and commands

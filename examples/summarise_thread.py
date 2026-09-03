@@ -10,10 +10,10 @@ the step rather than the whole run.
 It runs on the offline ``echo`` provider by default — no API key, no network, no cost —
 and it is enqueueable straight from the CLI::
 
-    llmrun enqueue summarise_thread --tenant demo \\
+    durable-llm enqueue summarise_thread --tenant demo \\
         --json '{"thread_id": "thread-42"}' --import examples/summarise_thread.py
-    llmrun worker --once --provider echo --import examples/summarise_thread.py
-    llmrun runs show <run-id>
+    durable-llm worker --once --provider echo --import examples/summarise_thread.py
+    durable-llm runs show <run-id>
 
 
 What a mid-run crash costs
@@ -23,7 +23,7 @@ Assume the worker dies after step eight. Not a hypothetical: a rolling deploy, a
 kill, a reclaimed spot instance, a ``kubectl delete pod``. Seven billed model calls have
 already been made and paid for.
 
-**Without llmrun**, this pipeline is an ordinary Python function and its entire state —
+**Without durable-llm**, this pipeline is an ordinary Python function and its entire state —
 ``participants``, ``decisions``, ``actions`` — lives in local variables inside a process
 that no longer exists. There is no checkpoint to resume from, so the only recovery is to
 start again from the top. That means:
@@ -39,7 +39,7 @@ start again from the top. That means:
 
 Eleven calls' worth of work becomes eighteen, then twenty-five, then thirty-two.
 
-**With llmrun**, every step commits its output to Postgres before the next one starts, and
+**With durable-llm**, every step commits its output to Postgres before the next one starts, and
 every real provider call is written to the ``llm_calls`` ledger in the same transaction as
 the spend it caused. The restarted worker reclaims the run when its lease expires, replays
 steps one through seven from their stored outputs *without calling the model*, and resumes
@@ -57,7 +57,7 @@ so renaming a step in a deploy is a cache invalidation: in-flight runs will re-e
 That is why the names live in :data:`STEP_NAMES` rather than being spelled inline twice.
 
 *Every payload is plain JSON.* Steps and calls are content-addressed by hashing their
-payload (see :mod:`llmrun.cache`), and only plain JSON types hash identically in a
+payload (see :mod:`durable_llm.cache`), and only plain JSON types hash identically in a
 different process. Sets, objects with a default ``__repr__``, and anything else whose
 ``str()`` embeds a memory address will hash differently after a restart and quietly cost
 you a second call.
@@ -77,10 +77,10 @@ import time
 from collections.abc import Mapping
 from typing import Any, Final
 
-from llmrun.context import RunContext
-from llmrun.pipeline import pipeline
+from durable_llm.context import RunContext
+from durable_llm.pipeline import pipeline
 
-logger = logging.getLogger("llmrun.examples.summarise_thread")
+logger = logging.getLogger("durable_llm.examples.summarise_thread")
 
 #: Output ceiling for every call. Also what the budget guard projects against before the
 #: call is made, so it is a real cost lever and not just a truncation setting.
@@ -96,7 +96,7 @@ MAX_TOKENS: Final[int] = 512
 #: pull the trigger.
 #:
 #: The second is subtler and is why :func:`_pace` is also called from the schema validators.
-#: There are two independent recovery mechanisms in llmrun, and a crash lands in the
+#: There are two independent recovery mechanisms in durable_llm, and a crash lands in the
 #: territory of exactly one of them:
 #:
 #: * kill the worker *between* steps and the resumed run replays completed steps from the
@@ -107,10 +107,10 @@ MAX_TOKENS: Final[int] = 512
 #:
 #: Only the second exercises the idempotency store. That window is the few milliseconds
 #: between two commits inside ``ctx.llm()``, and pipeline code cannot reach into it — except
-#: through the one callback llmrun invokes there: ``schema``. So the validators below pace
+#: through the one callback durable_llm invokes there: ``schema``. So the validators below pace
 #: too, which widens the window to something a poller can reliably catch. A real pipeline
 #: gets that width for free, from validation that does actual work.
-PACE_ENV: Final[str] = "LLMRUN_DEMO_PACE_SECONDS"
+PACE_ENV: Final[str] = "DURABLE_LLM_DEMO_PACE_SECONDS"
 
 #: The twelve steps, in order. Step one is a plain function call; the other eleven are
 #: model calls. This tuple is the pipeline's contract with the chaos suite, which asserts
@@ -165,7 +165,7 @@ def fetch_messages(thread_id: str) -> dict[str, Any]:
     """The one non-model step: stand in for "go and read the ticket system".
 
     A real pipeline would query a database or an API here. What matters for the example is
-    that this is *work worth checkpointing* — on resume, llmrun returns the stored output
+    that this is *work worth checkpointing* — on resume, durable_llm returns the stored output
     instead of hitting whatever system this represents a second time.
 
     Deterministic by construction: the speaker rotation is chosen from a SHA-256 of
@@ -200,7 +200,7 @@ def fetch_messages(thread_id: str) -> dict[str, Any]:
 # --------------------------------------------------------------------------------------
 #
 # A `schema` is any callable that takes decoded JSON and either returns a validated value
-# or raises. llmrun turns any exception raised here into a MalformedOutputError, which is
+# or raises. durable_llm turns any exception raised here into a MalformedOutputError, which is
 # retried *as a repair* — the validation error is appended to the prompt so the model can
 # correct itself — and, if it still fails, ends the run in `pending_review` rather than
 # `failed`, because a model that cannot satisfy a schema twice is a human's problem.
@@ -251,7 +251,7 @@ def validate_prose(parsed: Any) -> str:
 
     Returning a plain ``str`` shows the other half of the ``schema`` contract: a validator
     is free to *transform*, not merely to check. The rest of the pipeline — and
-    ``llmrun runs show`` — then deals in readable sentences instead of raw JSON.
+    ``durable-llm runs show`` — then deals in readable sentences instead of raw JSON.
     """
     _pace()
     return _require_text(_require_object(parsed), "summary")
@@ -474,20 +474,20 @@ def _main() -> int:
 
     This is a script entry point rather than library code, which is why it is allowed to
     print. It exists to show the other half of the API: ``Pipeline.enqueue`` is the same
-    call ``llmrun enqueue`` makes, so an application can queue work directly without
+    call ``durable-llm enqueue`` makes, so an application can queue work directly without
     shelling out to the CLI.
     """
     import sys
 
-    from llmrun.db import connect
+    from durable_llm.db import connect
 
     thread_id = sys.argv[1] if len(sys.argv) > 1 else "thread-42"
     with connect() as conn:
         run_id = summarise_thread.enqueue(tenant_id="demo", conn=conn, thread_id=thread_id)
 
     print(f"queued run {run_id}")
-    print(f"  llmrun worker --once --provider echo --import {__file__}")
-    print(f"  llmrun runs show {run_id}")
+    print(f"  durable-llm worker --once --provider echo --import {__file__}")
+    print(f"  durable-llm runs show {run_id}")
     return 0
 
 

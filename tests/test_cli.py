@@ -1,12 +1,12 @@
 """The user-facing surface: ~1000 lines of ``cli.py`` that nothing else in the suite touches.
 
-Everything llmrun does correctly is invisible unless a command prints it. ``runs show`` is
+Everything durable_llm does correctly is invisible unless a command prints it. ``runs show`` is
 the evidence for the project's central claim — that a crashed run replays instead of
 re-buying tokens — and ``costs`` is the number somebody will put in a budget review. Both
 were entirely untested, which meant the engine's guarantees were verified and the only way
 anyone observes them was not.
 
-Everything here drives :func:`llmrun.cli.main` **in this process**, against the same Postgres
+Everything here drives :func:`durable_llm.cli.main` **in this process**, against the same Postgres
 the rest of the suite uses, with ``capsys`` for the output. No subprocesses: a CLI test suite
 that costs a second per case gets skipped locally, then trimmed, then deleted. In-process
 also buys a property a subprocess cannot — the pipeline under test is registered by *this*
@@ -21,7 +21,7 @@ docstring and none of which anything checked:
   were wrong. The difference between 1 and 2 is the difference between "your database is
   down" and "you typed it wrong", and several tests here exist only to pin which side of that
   line a given input falls on.
-* **stdout is the result; stderr is commentary.** ``run_id=$(llmrun enqueue ...)`` is a
+* **stdout is the result; stderr is commentary.** ``run_id=$(durable-llm enqueue ...)`` is a
   documented usage, so a diagnostic leaking onto stdout is a broken pipeline for somebody.
   Every failure case below asserts stdout is *empty*, not merely that the code is non-zero.
 * **Tables are the API.** The fixed-width layout is what people read, paste and grep. The
@@ -39,10 +39,10 @@ from uuid import UUID
 
 import pytest
 
-from llmrun.cli import _LABEL_WIDTH, main
-from llmrun.context import RunContext
-from llmrun.db import transaction
-from llmrun.pipeline import pipeline
+from durable_llm.cli import _LABEL_WIDTH, main
+from durable_llm.context import RunContext
+from durable_llm.db import transaction
+from durable_llm.pipeline import pipeline
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterator, Sequence
@@ -121,7 +121,7 @@ def cli_probe(ctx: RunContext, topic: str) -> dict[str, Any]:
 
 
 class CliResult(NamedTuple):
-    """One in-process invocation of :func:`llmrun.cli.main`."""
+    """One in-process invocation of :func:`durable_llm.cli.main`."""
 
     exit_code: int
     stdout: str
@@ -155,9 +155,9 @@ def _restore_root_logging() -> Iterator[None]:
 
 @pytest.fixture
 def run_cli(database_url: str, capsys: pytest.CaptureFixture[str]) -> Callable[..., CliResult]:
-    """Call ``llmrun <args>`` in-process and hand back its exit code and streams.
+    """Call ``durable_llm <args>`` in-process and hand back its exit code and streams.
 
-    ``--dsn`` is prepended rather than left to ``$LLMRUN_DATABASE_URL`` so the tests state
+    ``--dsn`` is prepended rather than left to ``$DURABLE_LLM_DATABASE_URL`` so the tests state
     which database they mean instead of inheriting it from the shell — and it goes *before*
     the subcommand deliberately, which only works because ``cli._global_options`` defaults
     every shared flag to ``argparse.SUPPRESS``. An ordinary default would let the subparser
@@ -300,10 +300,11 @@ def insert_run(
 ) -> UUID:
     """Insert a ``runs`` row in a precise state, bypassing the worker entirely.
 
-    ``llmrun runs list`` and ``llmrun health`` are pure read commands: what they have to get
-    right is how they *render* a row, and driving a real worker into each of the six statuses
-    would test the worker instead. ``locked_at`` is stamped ``now()`` whenever ``locked_by``
-    is given, because a lease with no timestamp is a state the worker cannot produce.
+    ``durable-llm runs list`` and ``durable-llm health`` are pure read commands: what they
+    have to get right is how they *render* a row, and driving a real worker into each of the
+    six statuses would test the worker instead. ``locked_at`` is stamped ``now()`` whenever
+    ``locked_by`` is given, because a lease with no timestamp is a state the worker cannot
+    produce.
     """
     with transaction(db.conn) as cur:
         cur.execute(
@@ -370,7 +371,7 @@ def test_enqueue_prints_a_run_id_and_nothing_else(
     db: Database,
     run_cli: Callable[..., CliResult],
 ) -> None:
-    """``run_id=$(llmrun enqueue ...)`` is documented usage, so stdout is a contract.
+    """``run_id=$(durable-llm enqueue ...)`` is documented usage, so stdout is a contract.
 
     The id has to be the *only* thing on stdout and it has to be parseable — the epilog in
     ``cli.py`` shows exactly that shell substitution, and ``_cmd_enqueue`` routes its "queued
@@ -418,7 +419,7 @@ def test_enqueue_rejects_bad_json_as_usage_with_a_silent_stdout(
     the boundary and exited 2. Same class of mistake, two different exit codes, one of them
     telling the operator their database is broken.
 
-    stdout is asserted empty on all three because a script doing ``run_id=$(llmrun enqueue
+    stdout is asserted empty on all three because a script doing ``run_id=$(durable-llm enqueue
     ...)`` checks ``$?`` if it checks anything, and a partial or diagnostic line on stdout
     becomes a run id in somebody's variable.
     """
@@ -984,7 +985,7 @@ def test_worker_rejects_an_unknown_provider_at_the_argument_boundary(
     """``--provider`` is constrained by argparse ``choices``, generated from PROVIDER_NAMES.
 
     Both spellings of this failure exit 2 — ``_cmd_worker`` catches ``get_provider``'s
-    ``ValueError`` for the ``$LLMRUN_PROVIDER`` path argparse never sees — so the exit code
+    ``ValueError`` for the ``$DURABLE_LLM_PROVIDER`` path argparse never sees — so the exit code
     alone proves nothing, and the assertion is on argparse's own "invalid choice" message.
     That is the difference between rejecting a typo before importing modules and opening a
     database connection, and rejecting it after. It also makes ``--help`` and shell completion

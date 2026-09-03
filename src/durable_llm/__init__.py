@@ -1,11 +1,11 @@
-"""llmrun — multi-step LLM pipelines that survive crashes and cannot silently overspend.
+"""durable_llm — multi-step LLM pipelines that survive crashes and cannot silently overspend.
 
 All state lives in Postgres: four tables, no broker, no scheduler, no new infrastructure.
 A pipeline is an ordinary Python function whose steps are checkpointed, whose provider calls
 are recorded in an idempotency ledger before they can be repeated, and whose spend is
 checked *before* each call rather than reconciled afterwards.
 
-    from llmrun import pipeline, RunContext
+    from durable_llm import pipeline, RunContext
 
     @pipeline(name="summarise_thread", budget_usd="2.50")
     def summarise_thread(ctx: RunContext, thread_id: str) -> dict:
@@ -15,44 +15,46 @@ checked *before* each call rather than reconciled afterwards.
 
 Then::
 
-    llmrun migrate
-    llmrun enqueue summarise_thread --tenant acme --json '{"thread_id": "t1"}'
-    llmrun worker
-    llmrun runs show <run-id>
+    durable-llm migrate
+    durable-llm enqueue summarise_thread --tenant acme --json '{"thread_id": "t1"}'
+    durable-llm worker
+    durable-llm runs show <run-id>
 
 Kill the worker at any point and start it again: completed steps replay from the ``steps``
 table and completed provider calls replay from the ``llm_calls`` ledger, so the retry
-re-executes the pipeline without re-buying a single token. ``llmrun runs show`` prints the
+re-executes the pipeline without re-buying a single token. ``durable-llm runs show`` prints the
 per-call ledger with the replays marked, which is the claim made auditable.
 
 What is exported here is the whole public API. Everything else — the worker loop, the SQL
-migration runner, the registry, the CLI — is reachable at ``llmrun.<module>`` for the people
+migration runner, the registry, the CLI — is reachable at ``durable_llm.<module>`` for the people
 who need it, but is not part of the promise:
 
-* :func:`~llmrun.pipeline.pipeline` — the decorator that defines and registers a pipeline.
-* :class:`~llmrun.context.RunContext` — the handle a pipeline body is given: ``ctx.step()``,
+* :func:`~durable_llm.pipeline.pipeline` — the decorator that defines and registers a pipeline.
+* :class:`~durable_llm.context.RunContext` — the handle a pipeline body is given: ``ctx.step()``,
   ``ctx.llm()``, ``ctx.escalate()``.
-* :class:`~llmrun.types.LLMResult` — one provider completion, with its token counts.
-* :class:`~llmrun.errors.ErrorClass` and the five error types — the failure taxonomy that
+* :class:`~durable_llm.types.LLMResult` — one provider completion, with its token counts.
+* :class:`~durable_llm.errors.ErrorClass` and the five error types — the failure taxonomy that
   decides whether something is retried, repaired, escalated, or halted.
-* :class:`~llmrun.providers.base.Provider` and :func:`~llmrun.providers.base.get_provider` —
-  the seam you implement to talk to a model llmrun has never heard of.
-* :class:`~llmrun.cost.Price` and :func:`~llmrun.cost.register_price` — how you correct the
-  shipped price table, which is placeholder data and *will* be wrong for your account.
+* :class:`~durable_llm.providers.base.Provider` and
+  :func:`~durable_llm.providers.base.get_provider` — the seam you implement to talk to a
+  model durable_llm has never heard of.
+* :class:`~durable_llm.cost.Price` and :func:`~durable_llm.cost.register_price` — how you
+  correct the shipped price table, which is placeholder data and *will* be wrong for your
+  account.
 
-The last four are exported rather than left at ``llmrun.providers`` / ``llmrun.cost``
+The last four are exported rather than left at ``durable_llm.providers`` / ``durable_llm.cost``
 because both are things a working installation routinely needs: a custom provider and a
 corrected price are ordinary configuration, not internals, and a stability promise that
 excluded them would be a promise about the parts nobody has to touch. Naming them here is
-free — :func:`~llmrun.providers.base.get_provider` imports the ``anthropic`` SDK inside the
-function body, so ``import llmrun`` still pulls in no provider SDK on a core install.
+free — :func:`~durable_llm.providers.base.get_provider` imports the ``anthropic`` SDK inside the
+function body, so ``import durable_llm`` still pulls in no provider SDK on a core install.
 """
 
 from __future__ import annotations
 
-from llmrun.context import RunContext
-from llmrun.cost import Price, register_price
-from llmrun.errors import (
+from durable_llm.context import RunContext
+from durable_llm.cost import Price, register_price
+from durable_llm.errors import (
     BudgetExceededError,
     ErrorClass,
     LLMRunError,
@@ -61,16 +63,16 @@ from llmrun.errors import (
     PolicyRefusalError,
     TransientError,
 )
-from llmrun.pipeline import Pipeline, pipeline
+from durable_llm.pipeline import Pipeline, pipeline
 
-# Imported from the package facade rather than from `llmrun.providers.base` so this line
+# Imported from the package facade rather than from `durable_llm.providers.base` so this line
 # keeps working if the seam ever moves modules. It costs nothing at import time: the
 # subpackage's own __init__ deliberately touches no provider SDK, and the `anthropic`
-# import lives inside get_provider's body. `import llmrun` on a core install therefore
+# import lives inside get_provider's body. `import durable_llm` on a core install therefore
 # still leaves "anthropic" absent from sys.modules, which is the property that lets someone
 # clone this repo with no API key and run the whole suite.
-from llmrun.providers import Provider, get_provider
-from llmrun.types import LLMResult
+from durable_llm.providers import Provider, get_provider
+from durable_llm.types import LLMResult
 
 __version__ = "0.1.0"
 

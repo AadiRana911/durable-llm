@@ -1,4 +1,4 @@
-"""The failure taxonomy — the centrepiece of llmrun.
+"""The failure taxonomy — the centrepiece of durable_llm.
 
 Most production LLM code contains some variant of::
 
@@ -56,7 +56,7 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import ClassVar, Final
 
-from llmrun.types import RunStatus
+from durable_llm.types import RunStatus
 
 __all__ = [
     "DISPOSITIONS",
@@ -137,7 +137,7 @@ class PermanentError(LLMRunError):
 
 
 #: Cap on the ``error_detail`` columns. Both are unbounded ``text``, but a multi-megabyte
-#: provider payload pasted into an error message turns ``llmrun runs list`` into a memory
+#: provider payload pasted into an error message turns ``durable-llm runs list`` into a memory
 #: problem, and nothing after the first few lines has ever helped anyone.
 MAX_ERROR_DETAIL: Final[int] = 4000
 
@@ -164,7 +164,7 @@ def error_detail(exc: BaseException, limit: int = MAX_ERROR_DETAIL) -> str:
 def classify(exc: BaseException) -> ErrorClass:
     """Map any exception onto the taxonomy.
 
-    Known llmrun errors report their own class; everything else is ``PERMANENT``. The
+    Known durable_llm errors report their own class; everything else is ``PERMANENT``. The
     conservative direction matters: mislabelling a real bug as transient produces five
     slow, billed repetitions of the same crash, whereas mislabelling a transient blip as
     permanent produces one honest failure that a human can see and requeue.

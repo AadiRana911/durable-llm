@@ -36,11 +36,11 @@ Five ordering rules are load-bearing and are easy to get subtly wrong:
    resume, forever. See :meth:`RunContext.llm`.
 
 The retry policy is not implemented here. It is read from
-:data:`llmrun.errors.DISPOSITIONS`, the same table the worker consults, so in-step retries
+:data:`durable_llm.errors.DISPOSITIONS`, the same table the worker consults, so in-step retries
 and run-level retries cannot drift apart.
 
 One guarantee is deliberately *not* pre-flight. The cap is enforced before the call from a
-projection, and that projection can under-estimate (see :mod:`llmrun.budget`), so the
+projection, and that projection can under-estimate (see :mod:`durable_llm.budget`), so the
 recorded cost is compared against the cap again afterwards — in the same transaction as the
 ledger row, and raising only once that row is committed. A cap that loses the receipt for
 the call that crossed it is worse than one that reports it a call late.
@@ -57,11 +57,11 @@ from decimal import Decimal
 from typing import TYPE_CHECKING, Any, Final, NoReturn
 from uuid import UUID
 
-from llmrun.budget import budget_overrun, check_budget, project_cost, record_spend
-from llmrun.cache import canonical_json, input_hash, prompt_json
-from llmrun.cost import cost_of
-from llmrun.db import transaction
-from llmrun.errors import (
+from durable_llm.budget import budget_overrun, check_budget, project_cost, record_spend
+from durable_llm.cache import canonical_json, input_hash, prompt_json
+from durable_llm.cost import cost_of
+from durable_llm.db import transaction
+from durable_llm.errors import (
     DISPOSITIONS,
     BudgetExceededError,
     ErrorClass,
@@ -73,18 +73,18 @@ from llmrun.errors import (
     classify,
     error_detail,
 )
-from llmrun.types import as_decimal
+from durable_llm.types import as_decimal
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
     import psycopg
     from psycopg.rows import DictRow
 
-    from llmrun.providers.base import Provider
-    from llmrun.types import LLMResult, Row
+    from durable_llm.providers.base import Provider
+    from durable_llm.types import LLMResult, Row
 
 __all__ = ["RunContext"]
 
-logger = logging.getLogger("llmrun.context")
+logger = logging.getLogger("durable_llm.context")
 
 #: Longest excerpt of a rejected response, or of the validation error explaining why it was
 #: rejected, fed back into a repair prompt. Enough for the model to see what it did wrong;
@@ -95,7 +95,7 @@ _MAX_REPAIR_EXCERPT: Final[int] = 2000
 #: Off by default: those strings are the tenant's data, and the repair path used to write
 #: them to a logger the CLI configures at INFO, so a schema mismatch on a document
 #: containing personal data put that data in the operator's log with nothing asking first.
-PAYLOAD_LOG_ENV: Final[str] = "LLMRUN_LOG_PAYLOADS"
+PAYLOAD_LOG_ENV: Final[str] = "DURABLE_LLM_LOG_PAYLOADS"
 
 _STEP_RUNNING: Final[str] = "running"
 _STEP_SUCCEEDED: Final[str] = "succeeded"
@@ -249,7 +249,7 @@ class RunContext:
         input: The arguments the run was enqueued with, decoded from ``runs.input``.
         conn: The connection every checkpoint and ledger row is written on.
         provider: The model backend. Anything satisfying
-            :class:`~llmrun.providers.base.Provider`.
+            :class:`~durable_llm.providers.base.Provider`.
         budget_usd: The run's cap, or ``None`` for unlimited. Authoritative enforcement
             reads the database row; this copy is for pipeline code that wants to look.
         default_model: Model used by :meth:`llm` when a call does not name one.
@@ -346,7 +346,7 @@ class RunContext:
         5. Write the ledger row and the spend in one transaction and commit, **before** any
            further call is made.
         6. If ``schema`` is given, decode and validate. A failure is a
-           :class:`~llmrun.errors.MalformedOutputError`, which triggers a bounded repair
+           :class:`~durable_llm.errors.MalformedOutputError`, which triggers a bounded repair
            loop: the validation error is appended to the prompt so the model can correct
            itself. Exhausting it ends the run in ``pending_review``, not ``failed`` — a
            model that cannot satisfy a schema is a case for a human, not for an alert.
@@ -427,7 +427,7 @@ class RunContext:
     def escalate(self, reason: str) -> NoReturn:
         """Hand the run to a human.
 
-        Raises :class:`~llmrun.errors.PolicyRefusalError`, which the disposition table sends
+        Raises :class:`~durable_llm.errors.PolicyRefusalError`, which the disposition table sends
         to ``pending_review`` with no retries. This is for the case a pipeline detects
         itself: input it should not process, an answer it does not trust, a threshold it
         will not cross on its own authority. Deliberately not a return value — a pipeline
@@ -619,7 +619,7 @@ class RunContext:
                 )
             # Committed. Crash immediately before: the step stays 'running' and the resumed
             # run re-executes it — safe, just undiagnosable. Crash immediately after: the
-            # failure is durable and `llmrun runs show` can explain it. Note that this row
+            # failure is durable and `durable-llm runs show` can explain it. Note that this row
             # does not decide anything; the worker classifies the same exception itself and
             # the disposition table decides the run's terminal status. This is evidence, not
             # control flow.
@@ -660,7 +660,7 @@ class RunContext:
         # the cost projection is measured against, whereas the cache key is computed from
         # the payload *object* by `digest_for_round` above. The two want different fallbacks
         # for a non-JSON value — the key needs a type tag so `Decimal("1")` and `"1"` cannot
-        # collide, the prompt wants the number rather than llmrun's bookkeeping around it —
+        # collide, the prompt wants the number rather than durable_llm's bookkeeping around it —
         # and one function serving both meant fixing the collision quietly rewrote every
         # prompt containing an exotic type, and charged for the extra tokens.
         payload_text = payload if isinstance(payload, str) else prompt_json(payload)
@@ -792,7 +792,7 @@ class RunContext:
             return None
 
         # cost_usd is 0 because this call was already paid for. tokens are copied from
-        # the original so `llmrun costs` can price what the cache avoided — savings you
+        # the original so `durable-llm costs` can price what the cache avoided — savings you
         # cannot quantify get argued with.
         cur.execute(
             _INSERT_LLM_CALL,
@@ -1056,7 +1056,7 @@ def _provider_default_model(provider: Provider) -> str:
     was not.
 
     Failing closed is the only safe direction for a value that feeds pricing, and it matches
-    what :func:`llmrun.worker.resolve_default_model` already did on the worker path — the two
+    what :func:`durable_llm.worker.resolve_default_model` already did on the worker path — the two
     entry points implemented different answers to the same question, and this is the one that
     was wrong.
 

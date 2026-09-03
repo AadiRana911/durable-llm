@@ -2,7 +2,7 @@
 
 ``runs.pipeline`` is a string. An hour after a run is enqueued, a worker on a different
 machine has to turn that string back into the function that was meant to execute it, and
-everything llmrun promises about correctness is downstream of getting that right. Three
+everything durable_llm promises about correctness is downstream of getting that right. Three
 properties, one section each:
 
 * **The conflict.** Two different functions registered under one name is the failure nobody
@@ -34,8 +34,8 @@ from typing import TYPE_CHECKING, Any
 
 import pytest
 
-from llmrun import registry
-from llmrun.pipeline import Pipeline
+from durable_llm import registry
+from durable_llm.pipeline import Pipeline
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -49,7 +49,7 @@ if TYPE_CHECKING:
 _PIPELINE_MODULE = '''\
 """Throwaway module for tests/test_registry.py. Registers one pipeline on import."""
 
-from llmrun.pipeline import pipeline
+from durable_llm.pipeline import pipeline
 
 
 @pipeline(name={name!r})
@@ -283,7 +283,7 @@ def test_load_module_imports_a_py_path_and_is_idempotent(tmp_path: Path) -> None
     line that asked for nothing unusual.
 
     This form matters more than it looks: the examples and the chaos suite live outside any
-    installed package, so it is the only way to run llmrun without packaging your pipelines
+    installed package, so it is the only way to run durable-llm without packaging your pipelines
     first.
     """
     path = _write_module(tmp_path, "registry_probe_file", pipeline_name="probe_file")

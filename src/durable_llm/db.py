@@ -36,15 +36,15 @@ __all__ = [
     "transaction",
 ]
 
-logger = logging.getLogger("llmrun.db")
+logger = logging.getLogger("durable_llm.db")
 
-DEFAULT_DSN_ENV = "LLMRUN_DATABASE_URL"
+DEFAULT_DSN_ENV = "DURABLE_LLM_DATABASE_URL"
 """Environment variable consulted by :func:`default_dsn`."""
 
-DEFAULT_DSN = "postgresql://llmrun:llmrun@localhost:55432/llmrun"
+DEFAULT_DSN = "postgresql://durable_llm:durable_llm@localhost:55432/durable_llm"
 """Matches docker-compose.yml. Port 55432 avoids colliding with a local Postgres on 5432."""
 
-_APPLICATION_NAME = "llmrun"
+_APPLICATION_NAME = "durable-llm"
 
 _adapters_registered = False
 
@@ -53,7 +53,7 @@ def default_dsn() -> str:
     """Return the DSN from the environment, falling back to the local compose database.
 
     An empty or whitespace-only environment variable is treated as unset: an exported but
-    blank ``LLMRUN_DATABASE_URL`` is far more likely to be a broken shell profile than a
+    blank ``DURABLE_LLM_DATABASE_URL`` is far more likely to be a broken shell profile than a
     deliberate request to connect to nothing.
     """
     dsn = os.environ.get(DEFAULT_DSN_ENV, "").strip()
@@ -107,7 +107,7 @@ def _ensure_global_decimal_adapters() -> None:
 def connect(dsn: str | None = None, **kwargs: Any) -> psycopg.Connection[DictRow]:
     """Open a connection with the project's non-negotiable settings.
 
-    ``autocommit=False`` is deliberate: llmrun's correctness rests on writing a provider
+    ``autocommit=False`` is deliberate: durable_llm's correctness rests on writing a provider
     response, its cost row and the run's spend inside one transaction, so implicit
     per-statement commits would defeat the whole design. Use :func:`transaction` to commit.
 

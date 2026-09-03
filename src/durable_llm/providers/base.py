@@ -1,15 +1,15 @@
 """The provider seam: a two-member protocol and a factory.
 
-llmrun's core carries **zero** provider dependencies. Everything the engine needs from a
+durable_llm's core carries **zero** provider dependencies. Everything the engine needs from a
 model is expressed by :class:`Provider`, and the only import of the ``anthropic`` SDK in
 the whole package happens lazily — inside :func:`get_provider`, and inside
-:mod:`llmrun.providers.anthropic` itself. That is what lets a reviewer clone the repo,
+:mod:`durable_llm.providers.anthropic` itself. That is what lets a reviewer clone the repo,
 run ``make demo`` against the echo provider, and never think about an API key.
 
-The protocol is deliberately narrow. Everything that makes llmrun interesting —
+The protocol is deliberately narrow. Everything that makes durable_llm interesting —
 checkpointing, budget enforcement, the idempotency ledger, retry policy — lives above
-this line, in :mod:`llmrun.context` and :mod:`llmrun.worker`. A provider's entire job is
-"turn a prompt into an :class:`~llmrun.types.LLMResult`, or raise a classified error".
+this line, in :mod:`durable_llm.context` and :mod:`durable_llm.worker`. A provider's entire job is
+"turn a prompt into an :class:`~durable_llm.types.LLMResult`, or raise a classified error".
 """
 
 from __future__ import annotations
@@ -17,11 +17,11 @@ from __future__ import annotations
 import logging
 from typing import Any, Protocol, runtime_checkable
 
-from llmrun.types import LLMResult
+from durable_llm.types import LLMResult
 
 __all__ = ["PROVIDER_NAMES", "LLMResult", "Provider", "get_provider"]
 
-logger = logging.getLogger("llmrun.providers.base")
+logger = logging.getLogger("durable_llm.providers.base")
 
 #: Every provider name :func:`get_provider` accepts. The CLI uses this for
 #: ``--provider`` choices so the two can never drift apart.
@@ -37,13 +37,13 @@ class Provider(Protocol):
 
     1. **Never retry internally.** A silent retry bills the account twice while the
        caller records one call, so the ledger in ``llm_calls`` stops being the truth.
-       Retry policy belongs to :mod:`llmrun.context`, driven by the disposition table.
-    2. **Classify failures.** Raise :class:`~llmrun.errors.TransientError` for anything
-       worth retrying, :class:`~llmrun.errors.PolicyRefusalError` when the model refused
+       Retry policy belongs to :mod:`durable_llm.context`, driven by the disposition table.
+    2. **Classify failures.** Raise :class:`~durable_llm.errors.TransientError` for anything
+       worth retrying, :class:`~durable_llm.errors.PolicyRefusalError` when the model refused
        (retrying a refusal just burns money), and
-       :class:`~llmrun.errors.PermanentError` for everything else.
+       :class:`~durable_llm.errors.PermanentError` for everything else.
     3. **Report real token counts.** ``tokens_in``/``tokens_out`` feed
-       :func:`llmrun.cost.cost_of` directly; guessing here corrupts every budget.
+       :func:`durable_llm.cost.cost_of` directly; guessing here corrupts every budget.
 
     ``isinstance(obj, Provider)`` works (the protocol is runtime-checkable) and checks
     for the presence of ``name`` and ``complete``. ``issubclass`` does not — that is a
@@ -53,9 +53,9 @@ class Provider(Protocol):
     an adapter has to tell them apart:
 
     * **Reserved keys** are the framework's own bookkeeping, injected by
-      :meth:`llmrun.context.RunContext.llm` on every call whether the caller asked for them
+      :meth:`durable_llm.context.RunContext.llm` on every call whether the caller asked for them
       or not. Today that is exactly one key, ``step``, carrying the name of the step being
-      served — :class:`~llmrun.providers.echo.EchoProvider` routes its test hooks by it,
+      served — :class:`~durable_llm.providers.echo.EchoProvider` routes its test hooks by it,
       and a real adapter must swallow it, since no API has a ``step`` parameter. Drop
       these *silently*: they arrive on every call, so logging them is pure noise.
     * **Caller keys** are whatever the pipeline author typed into ``ctx.llm(...)``.
@@ -66,7 +66,7 @@ class Provider(Protocol):
     allowlist must not vanish quietly — the author is paying for a call that is not doing
     what they asked, and the parameter is already baked into the idempotency digest, so
     the replayed answer will look like it honoured a setting it never saw. Log a WARNING
-    naming the dropped keys. :mod:`llmrun.providers.anthropic` is the worked example;
+    naming the dropped keys. :mod:`durable_llm.providers.anthropic` is the worked example;
     its ``_FORWARDED_PARAMS`` and ``_RESERVED_PARAMS`` are the two halves of this rule.
     """
 
@@ -105,7 +105,7 @@ def get_provider(name: str, **kwargs: Any) -> Provider:
 
     ``"echo"`` costs nothing and needs nothing. ``"anthropic"`` imports the optional
     SDK *here* rather than at module scope, so a core install with no extras can still
-    import :mod:`llmrun.providers` and run the whole test suite.
+    import :mod:`durable_llm.providers` and run the whole test suite.
 
     Args:
         name: ``"echo"`` or ``"anthropic"``; case- and whitespace-insensitive.
@@ -119,15 +119,15 @@ def get_provider(name: str, **kwargs: Any) -> Provider:
     key = name.strip().lower() if isinstance(name, str) else ""
 
     if key == "echo":
-        from llmrun.providers.echo import EchoProvider
+        from durable_llm.providers.echo import EchoProvider
 
         return EchoProvider(**kwargs)
 
     if key == "anthropic":
         # Deliberately inside the function: importing this module pulls in the
         # `anthropic` SDK, which is an optional extra. Keeping it here is the whole
-        # reason `import llmrun` works on a machine that has never heard of Anthropic.
-        from llmrun.providers.anthropic import AnthropicProvider
+        # reason `import durable_llm` works on a machine that has never heard of Anthropic.
+        from durable_llm.providers.anthropic import AnthropicProvider
 
         return AnthropicProvider(**kwargs)
 

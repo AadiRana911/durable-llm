@@ -1,9 +1,9 @@
-# llmrun — design contract
+# durable-llm — design contract
 
 This file is the **binding interface contract**. Every module is implemented against it.
 If an implementation disagrees with this document, this document wins.
 
-## What llmrun is
+## What durable-llm is
 
 Run multi-step LLM pipelines that survive crashes, don't double-bill on retry, and can't
 silently blow a budget. State lives in Postgres. No new infrastructure.
@@ -27,7 +27,7 @@ silently blow a budget. State lives in Postgres. No new infrastructure.
 ## Package layout
 
 ```
-src/llmrun/
+src/durable_llm/
   __init__.py        public exports
   types.py           dataclasses + status literals
   errors.py          failure taxonomy + disposition table
@@ -40,7 +40,7 @@ src/llmrun/
   pipeline.py        @pipeline decorator, Pipeline object
   context.py         RunContext: ctx.step() / ctx.llm() / ctx.escalate()
   worker.py          claim loop + disposition handling
-  cli.py             llmrun <migrate|worker|enqueue|runs|costs|health>
+  cli.py             durable-llm <migrate|worker|enqueue|runs|costs|health>
   providers/
     __init__.py
     base.py          Provider protocol + LLMResult
@@ -55,7 +55,7 @@ three current migrations: `0001_initial.sql` creates the base tables,
 `0002_attempt_ceiling.sql` adds `failures` and `max_attempts`, and
 `0003_integrity_and_pacing.sql` adds retry pacing, migration checksums, provider latency,
 database constraints, and the final indexes. Migrations are additive files rather than edits
-to an applied one, so a database that has already run `llmrun migrate` stays correct.
+to an applied one, so a database that has already run `durable-llm migrate` stays correct.
 
 All ids are `uuid` generated with `gen_random_uuid()` (`pgcrypto` is not required on
 PG 13+; `gen_random_uuid()` is built in).
@@ -262,7 +262,7 @@ relying on them** — do not present invented numbers as authoritative.
 
 ```python
 def canonical_json(value: Any) -> str:
-    """The one JSON form llmrun hashes: sort_keys=True, separators=(",", ":"),
+    """The one JSON form durable-llm hashes: sort_keys=True, separators=(",", ":"),
     ensure_ascii=False, and a type-tagged fallback — a value JSON cannot represent
     natively becomes {"__type__": type(o).__name__, "__str__": str(o)}."""
 
@@ -284,7 +284,7 @@ saying it was a legitimate replay. The tag separates them at no cost to the cras
 the fallback was there for in the first place.
 
 But the same function was also rendering the payload a model reads, and prompt text wants
-the opposite: `{"amount":{"__str__":"1.50","__type__":"Decimal"}}` shows the model llmrun's
+the opposite: `{"amount":{"__str__":"1.50","__type__":"Decimal"}}` shows the model durable-llm's
 bookkeeping instead of the number and charges for the extra tokens. Hence `prompt_json`,
 which keeps the old rendering for the one caller that needs it — `llm()` builds its
 `payload_text` with it, while the key is computed from the payload *object* with
@@ -308,7 +308,7 @@ ORDER BY created_at LIMIT 1
 ```
 
 The token counts come back with the response because the `cached=true` row copies them: a
-saving you cannot quantify is a saving that gets argued with, and `llmrun costs` prices
+saving you cannot quantify is a saving that gets argued with, and `durable-llm costs` prices
 what the ledger avoided from exactly these numbers.
 
 A hit writes a new `llm_calls` row with `cached=true, cost_usd=0` and returns the stored
@@ -358,8 +358,8 @@ def budget_overrun(conn, run_id: UUID) -> Decimal | None
 ## `db.py`
 
 ```python
-DEFAULT_DSN_ENV = "LLMRUN_DATABASE_URL"
-def default_dsn() -> str            # env, else postgresql://llmrun:llmrun@localhost:55432/llmrun
+DEFAULT_DSN_ENV = "DURABLE_LLM_DATABASE_URL"
+def default_dsn() -> str            # env, else postgresql://durable_llm:durable_llm@localhost:55432/durable_llm
 def connect(dsn: str | None = None) -> psycopg.Connection   # autocommit=False, dict_row factory
 @contextmanager
 def transaction(conn) -> Iterator[psycopg.Cursor]           # commit on exit, rollback on error
@@ -375,7 +375,7 @@ checksum that differs from the file is a hard error. Pre-`0003` rows remain null
 digest was observed when they were applied. A database version absent from the checkout is a
 warning that the database may be ahead.
 
-Migration lookup checks, in order, `LLMRUN_MIGRATIONS_DIR`, the files bundled inside an
+Migration lookup checks, in order, `DURABLE_LLM_MIGRATIONS_DIR`, the files bundled inside an
 installed wheel, and the repository-level `migrations/` directory for source checkouts.
 Re-running against an up-to-date database is a no-op.
 `def migrate(conn, migrations_dir: Path | None = None) -> list[str]` returns applied versions.
@@ -504,7 +504,7 @@ lengths. Supports test hooks via constructor args:
 - `always_fail_at: dict[str, Exception] | None` — raise on *every* call for that step. The
   counterpart to `fail_at`'s one-shot entry, and the only way to drive the in-step transient
   retry budget (`DISPOSITIONS` gives `TransientError` five calls inside one `_billed_call`)
-  to exhaustion: with a hook that fires once, the branch where llmrun stops retrying and lets
+  to exhaustion: with a hook that fires once, the branch where durable-llm stops retrying and lets
   the step fail is unreachable from a test. Checked before `fail_at` and never consumes its
   entry, so a step named in both fails forever rather than failing twice and recovering.
 - `latency_seconds: float = 0.0`
@@ -588,17 +588,17 @@ with `attempt` means a pipeline whose steps legitimately outlive `--lease-second
 its first genuine transient error with the budget already spent, and is failed terminally
 having never been retried once.
 
-## `cli.py` (argparse, `llmrun` entry point)
+## `cli.py` (argparse, `durable-llm` entry point)
 
 ```
-llmrun migrate
-llmrun worker [--once] [--import MODULE] [--provider echo|anthropic] [--lease-seconds N]
+durable-llm migrate
+durable-llm worker [--once] [--import MODULE] [--provider echo|anthropic] [--lease-seconds N]
               [--poll-interval SECONDS] [--model MODEL] [--worker-id ID]
-llmrun enqueue PIPELINE --tenant T --json '{"thread_id": "t1"}' [--import MODULE]
-llmrun runs list [--tenant T] [--status S] [--limit N]
-llmrun runs show RUN_ID          # run header, step table, per-call cost ledger
-llmrun costs [--tenant T] [--since WHEN] [--until WHEN]
-llmrun health                    # database reachability, migrations, queue and stranded work
+durable-llm enqueue PIPELINE --tenant T --json '{"thread_id": "t1"}' [--import MODULE]
+durable-llm runs list [--tenant T] [--status S] [--limit N]
+durable-llm runs show RUN_ID          # run header, step table, per-call cost ledger
+durable-llm costs [--tenant T] [--since WHEN] [--until WHEN]
+durable-llm health                    # database reachability, migrations, queue and stranded work
 ```
 
 `runs show` is the demo's money shot — it must clearly display which calls were cached.
@@ -611,7 +611,7 @@ enough that a mid-run kill is visibly expensive. Runs on the echo provider by de
 
 ## Tests
 
-`tests/conftest.py` — session fixture that connects using `LLMRUN_DATABASE_URL`, runs
+`tests/conftest.py` — session fixture that connects using `DURABLE_LLM_DATABASE_URL`, runs
 migrations, and truncates tables between tests. **Skip the whole suite with a clear message
 if Postgres is unreachable** rather than erroring.
 
@@ -655,7 +655,7 @@ if Postgres is unreachable** rather than erroring.
 - `chaos/test_crash_resume.py` — **the credibility centrepiece**:
   1. run the 12-step example uninterrupted and record its output and billed-call count —
      the baseline — then reset the tables and enqueue the same work again
-  2. start `llmrun worker` as a subprocess
+  2. start `durable-llm worker` as a subprocess
   3. poll until ~half the steps are `succeeded` **and** `billed_calls >= succeeded_steps`,
      then `SIGKILL` the process group. The second condition is what aims the kill at the
      only window where the ledger is load-bearing: a provider call committed, its step not
@@ -679,7 +679,7 @@ if Postgres is unreachable** rather than erroring.
 
 `up` (compose up + wait for healthy + migrate) · `down` · `demo` · `test` · `chaos` ·
 `fmt` · `lint` · `clean`. `make demo` must work from a clean clone with only Docker and uv
-installed, and must end by printing `llmrun runs show` output.
+installed, and must end by printing `durable-llm runs show` output.
 
 ## CI
 
@@ -687,18 +687,18 @@ The workflow checks the lockfile, Ruff lint and formatting, migrations, and the 
 including chaos on Python 3.11, 3.12, and 3.13 against Postgres 17. Separate jobs validate the
 optional Anthropic SDK surface without a paid call, audit all locked dependencies, and build
 both distribution formats. The package job installs the built wheel outside the checkout and
-runs its bundled migrations against a clean Postgres service before calling `llmrun health`.
+runs its bundled migrations against a clean Postgres service before calling `durable-llm health`.
 
 ## docker-compose.yml
 
 Postgres 17, host port **55432** bound to `127.0.0.1` (avoid colliding with a local 5432 without
-exposing cleartext development prompts on the network), user/pass/db all `llmrun`, named
+exposing cleartext development prompts on the network), user/pass/db all `durable_llm`, named
 volume, `pg_isready` healthcheck.
 
 ## Conventions
 
 - Type hints everywhere; `from __future__ import annotations` at the top of every module
 - Docstrings explain *why*, not *what*
-- No `print()` in library code — use `logging.getLogger("llmrun.<module>")`
+- No `print()` in library code — use `logging.getLogger("durable_llm.<module>")`
 - Ruff for lint and format, line length 100
 - Every SQL statement is parameterised. No f-string SQL, anywhere, ever.

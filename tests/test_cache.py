@@ -22,7 +22,7 @@ There is a third group at the bottom, covering the two renderers the module now 
 name, because a fallback that merges ``Decimal("1")`` with ``"1"`` makes the ledger hand one
 call another call's stored answer. ``prompt_json`` is the text a model reads and keeps the
 old untagged ``str()`` rendering, because a model shown ``{"__type__":"Decimal"}`` is being
-charged tokens for llmrun's bookkeeping. The tests below assert both halves of that split
+charged tokens for durable_llm's bookkeeping. The tests below assert both halves of that split
 directly, so the two functions cannot be quietly merged back into one by someone tidying up
 what looks like duplication.
 """
@@ -39,7 +39,7 @@ from uuid import UUID
 
 import pytest
 
-from llmrun.cache import HASH_ALGORITHM, canonical_json, input_hash, prompt_json
+from durable_llm.cache import HASH_ALGORITHM, canonical_json, input_hash, prompt_json
 
 # A payload with some nesting, some non-ASCII, and mixed types — a realistic step payload
 # rather than a happy-path string.
@@ -58,7 +58,7 @@ PARAMS = {"temperature": 0, "top_p": 1}
 # prove the digest does not depend on anything process-local.
 _CROSS_PROCESS_SCRIPT = """
 import json, sys
-from llmrun.cache import input_hash
+from durable_llm.cache import input_hash
 
 step, payload_json, model, params_json = sys.argv[1:5]
 sys.stdout.write(input_hash(step, json.loads(payload_json), model, json.loads(params_json)))
@@ -285,7 +285,7 @@ def test_prompt_json_renders_the_value_rather_than_its_type_tag() -> None:
     ``prompt_json`` produces *prompt text*: ``context._complete`` hands its output straight
     to the provider as the user turn, and ``budget.project_cost`` sizes the pre-call estimate
     from its length. Neither wants the tag. A model shown
-    ``{"amount":{"__str__":"1.50","__type__":"Decimal"}}`` is being asked to read llmrun's
+    ``{"amount":{"__str__":"1.50","__type__":"Decimal"}}`` is being asked to read durable_llm's
     bookkeeping instead of the number, and the caller is paying for the extra tokens.
 
     The two functions differ by one keyword argument and are otherwise identical, which makes

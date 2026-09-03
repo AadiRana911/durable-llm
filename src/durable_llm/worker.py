@@ -22,9 +22,10 @@ locked rows instead of blocking on them. Without ``SKIP LOCKED``, ten workers se
 behind the same head-of-queue row and the pool has an effective concurrency of one.
 
 The other half of this module is the verdict. When a run raises, the exception is classified
-(:func:`llmrun.errors.classify`), the class is looked up in :data:`llmrun.errors.DISPOSITIONS`,
-and the table — not an ``if`` chain here — decides whether the run goes back to ``queued`` or
-lands in a terminal status with ``error_class``/``error_detail`` recorded.
+(:func:`durable_llm.errors.classify`), the class is looked up in
+:data:`durable_llm.errors.DISPOSITIONS`, and the table — not an ``if`` chain here — decides
+whether the run goes back to ``queued`` or lands in a terminal status with
+``error_class``/``error_detail`` recorded.
 """
 
 from __future__ import annotations
@@ -42,9 +43,9 @@ from typing import TYPE_CHECKING, Any
 
 from psycopg.types.json import Jsonb
 
-from llmrun.context import RunContext
-from llmrun.db import transaction
-from llmrun.errors import (
+from durable_llm.context import RunContext
+from durable_llm.db import transaction
+from durable_llm.errors import (
     DISPOSITIONS,
     IN_STEP_RETRY_CLASSES,
     MAX_BACKOFF_SECONDS,
@@ -54,8 +55,8 @@ from llmrun.errors import (
     classify,
     error_detail,
 )
-from llmrun.registry import get as get_pipeline
-from llmrun.types import RunRecord
+from durable_llm.registry import get as get_pipeline
+from durable_llm.types import RunRecord
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterator
@@ -65,8 +66,8 @@ if TYPE_CHECKING:
     import psycopg
     from psycopg.rows import DictRow
 
-    from llmrun.pipeline import Pipeline
-    from llmrun.providers.base import Provider
+    from durable_llm.pipeline import Pipeline
+    from durable_llm.providers.base import Provider
 
 __all__ = [
     "DEFAULT_LEASE_SECONDS",
@@ -80,7 +81,7 @@ __all__ = [
     "validate_worker_timings",
 ]
 
-logger = logging.getLogger("llmrun.worker")
+logger = logging.getLogger("durable_llm.worker")
 
 DEFAULT_LEASE_SECONDS = 60
 """How long a claim is trusted before another worker may steal the run.
@@ -155,7 +156,7 @@ RETURNING *;
 
 # The companion to the ceiling above. Without it, a run that reached the ceiling without ever
 # recording a verdict would sit there forever: invisible to the claim query, and
-# indistinguishable in `llmrun runs list` from one that is still being worked on. This turns
+# indistinguishable in `durable-llm runs list` from one that is still being worked on. This turns
 # it into a terminal row that says what happened, which is the whole difference between a
 # stranded run and a diagnosed one.
 #
@@ -301,7 +302,7 @@ def resolve_default_model(provider: Provider, override: str | None = None) -> st
     Order: the caller's ``--model``, then whatever the provider instance was configured
     with. There is no third step, and that is the point — this module used to carry a
     ``DEFAULT_MODELS`` table mapping ``"anthropic"`` to a model id, which duplicated
-    :data:`llmrun.providers.anthropic.DEFAULT_MODEL` across the provider seam and put the
+    :data:`durable_llm.providers.anthropic.DEFAULT_MODEL` across the provider seam and put the
     core in the business of knowing one adapter's model names. A provider's default model is
     the adapter's business; both bundled adapters expose it as ``.model``.
 
@@ -606,7 +607,7 @@ def _record_failure(
         # Worth its own line: the run still had retries left on paper and is being failed
         # anyway, which without an explanation looks like the retry budget being ignored.
         detail = (
-            f"{detail} [llmrun: failed with {limit - failures_after_this} retry(s) still "
+            f"{detail} [durable_llm: failed with {limit - failures_after_this} retry(s) still "
             f"unspent because the run has used all {run.max_attempts} of its allowed "
             f"executions (runs.attempt). Claims include lease-expiry steals, so raise "
             f"--lease-seconds if the steps are slow, or max_attempts if they are not.]"

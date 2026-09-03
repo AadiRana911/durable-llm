@@ -29,11 +29,11 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Final
 
 if TYPE_CHECKING:  # pragma: no cover - typing only, avoids a circular import at runtime
-    from llmrun.pipeline import Pipeline
+    from durable_llm.pipeline import Pipeline
 
 __all__ = ["clear", "get", "load_module", "names", "register"]
 
-logger = logging.getLogger("llmrun.registry")
+logger = logging.getLogger("durable_llm.registry")
 
 #: Name → pipeline for this process. Populated by the ``@pipeline`` decorator at import
 #: time, which is why importing the defining module is the whole of "registration".
@@ -42,7 +42,7 @@ _REGISTRY: dict[str, Pipeline] = {}
 #: Prefix for modules loaded from a file path whose stem is already taken in
 #: ``sys.modules``. Loading ``./tasks.py`` must never shadow an installed ``tasks``
 #: package for the rest of the process.
-_FILE_MODULE_PREFIX: Final[str] = "llmrun_imported_"
+_FILE_MODULE_PREFIX: Final[str] = "durable_llm_imported_"
 
 
 def register(name: str, pipeline: Pipeline) -> None:
@@ -91,7 +91,7 @@ def get(name: str) -> Pipeline:
         raise KeyError(
             f"no pipeline named {name!r} is registered in this process. "
             f"Pass --import with the module or file that defines it, for example: "
-            f"llmrun worker --import myapp.pipelines   (or --import ./examples/"
+            f"durable-llm worker --import myapp.pipelines   (or --import ./examples/"
             f"summarise_thread.py). Currently registered: {known}"
         ) from None
 

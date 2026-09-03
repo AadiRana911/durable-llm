@@ -26,14 +26,14 @@ from uuid import UUID, uuid4
 
 import pytest
 
-from llmrun.budget import CHARS_PER_TOKEN, check_budget, project_cost, record_spend
-from llmrun.context import RunContext
-from llmrun.cost import cost_of
-from llmrun.errors import BudgetExceededError, PermanentError
-from llmrun.pipeline import pipeline
-from llmrun.providers.echo import EchoProvider
-from llmrun.types import LLMResult
-from llmrun.worker import run_once
+from durable_llm.budget import CHARS_PER_TOKEN, check_budget, project_cost, record_spend
+from durable_llm.context import RunContext
+from durable_llm.cost import cost_of
+from durable_llm.errors import BudgetExceededError, PermanentError
+from durable_llm.pipeline import pipeline
+from durable_llm.providers.echo import EchoProvider
+from durable_llm.types import LLMResult
+from durable_llm.worker import run_once
 
 if TYPE_CHECKING:
     from conftest import Database
@@ -54,7 +54,7 @@ def _prompt(step: str) -> str:
 
 
 def _drive(db: Database, provider: EchoProvider) -> UUID | None:
-    """Claim and execute one run, exactly as ``llmrun worker --once`` does."""
+    """Claim and execute one run, exactly as ``durable-llm worker --once`` does."""
     return run_once(db.conn, worker_id=WORKER_ID, provider=provider, lease_seconds=30)
 
 

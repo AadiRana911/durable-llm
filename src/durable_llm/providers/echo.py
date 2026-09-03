@@ -1,6 +1,6 @@
 """A deterministic, offline provider — no network, no API key, no clock.
 
-This is not a test double bolted on at the end; it is the provider llmrun is *demoed*
+This is not a test double bolted on at the end; it is the provider durable_llm is *demoed*
 on. ``make demo`` and the whole chaos suite run against it, which is what makes "clone
 the repo and watch a crashed pipeline resume without double-billing" a ninety-second
 experience rather than a signup flow.
@@ -32,11 +32,11 @@ from collections import Counter
 from collections.abc import Iterable, Mapping
 from typing import Any
 
-from llmrun.types import LLMResult
+from durable_llm.types import LLMResult
 
 __all__ = ["EchoProvider"]
 
-logger = logging.getLogger("llmrun.providers.echo")
+logger = logging.getLogger("durable_llm.providers.echo")
 
 #: A closed vocabulary indexed by digest bytes. Fixed and ordered on purpose: adding or
 #: reordering a word changes every generated response and would invalidate any recorded
@@ -107,7 +107,7 @@ class EchoProvider:
         model: Model name reported when the caller does not supply one. Note that a
             model the caller *does* supply is echoed back verbatim, so the cost ledger
             prices what the pipeline asked for. Run the demo with ``default_model="echo"``
-            (priced at zero in :mod:`llmrun.cost`) to keep it free; point a budget test
+            (priced at zero in :mod:`durable_llm.cost`) to keep it free; point a budget test
             at a real model name to make the same fake accrue spend.
         fail_at: ``{step_name: exception}``. The exception is raised the **first** time
             that step is seen by *this instance* and never again, which is exactly the
@@ -119,7 +119,7 @@ class EchoProvider:
             Without it the in-step transient retry budget (``DISPOSITIONS`` gives
             ``TransientError`` five calls inside one ``_billed_call``) could only ever be
             driven to a single failure, so the branch that gives up after exhausting it was
-            unreachable from a test — the one path where llmrun stops retrying and lets the
+            unreachable from a test — the one path where durable_llm stops retrying and lets the
             step fail, and the one nobody could prove worked. Steps listed here are checked
             before ``fail_at`` and never consume its one-shot entry, so a step named in both
             fails forever rather than failing twice and recovering. Note that exhausting the

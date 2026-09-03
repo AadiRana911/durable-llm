@@ -3,7 +3,7 @@
 Three design decisions carry the weight here.
 
 **The SDK is imported lazily.** ``anthropic`` is an optional extra
-(``pip install llmrun[anthropic]``); the core, the tests and the demo never touch it.
+(``pip install durable-llm[anthropic]``); the core, the tests and the demo never touch it.
 The import lives inside :func:`_import_sdk`, so importing this module on a machine
 without the extra is fine — you only pay when you construct the provider, and you get a
 message that names the install command instead of a bare ``ModuleNotFoundError``.
@@ -15,7 +15,7 @@ reason the module is as small as it is.
 that holds the run row's lock, so "how long may one call hang" is a database question
 before it is a latency question. See :data:`DEFAULT_TIMEOUT_SECONDS`.
 
-Note on the module name: this file is ``llmrun.providers.anthropic``, but Python 3's
+Note on the module name: this file is ``durable_llm.providers.anthropic``, but Python 3's
 absolute imports mean ``import anthropic`` inside it resolves to the top-level SDK, not
 to itself. The two live under different keys in ``sys.modules`` and never collide.
 """
@@ -26,12 +26,12 @@ import logging
 from types import ModuleType
 from typing import Any
 
-from llmrun.errors import LLMRunError, PermanentError, PolicyRefusalError, TransientError
-from llmrun.types import LLMResult
+from durable_llm.errors import LLMRunError, PermanentError, PolicyRefusalError, TransientError
+from durable_llm.types import LLMResult
 
 __all__ = ["DEFAULT_MODEL", "DEFAULT_TIMEOUT_SECONDS", "AnthropicProvider"]
 
-logger = logging.getLogger("llmrun.providers.anthropic")
+logger = logging.getLogger("durable_llm.providers.anthropic")
 
 #: Default model. Overridable per provider instance and per call.
 DEFAULT_MODEL = "claude-sonnet-5"
@@ -61,8 +61,8 @@ DEFAULT_MODEL = "claude-sonnet-5"
 #: this constant is that no *single* hang can hold the row lock long enough to reach it.
 #:
 #: It is not a quality-of-service knob — the SDK's
-#: ``APITimeoutError`` classifies as :class:`~llmrun.errors.TransientError`, so hitting it
-#: hands the call straight to the retry policy in :mod:`llmrun.context` (backoff, jitter,
+#: ``APITimeoutError`` classifies as :class:`~durable_llm.errors.TransientError`, so hitting it
+#: hands the call straight to the retry policy in :mod:`durable_llm.context` (backoff, jitter,
 #: every attempt written down), which is strictly better than stalling behind a lock. A
 #: step that legitimately needs longer needs a longer lease too, so raise ``timeout=`` and
 #: ``lease_seconds`` together rather than either alone.
@@ -128,13 +128,13 @@ def _import_sdk() -> ModuleType:
     except ImportError as exc:  # pragma: no cover - depends on the install profile
         raise ImportError(
             "the anthropic provider requires the optional SDK; "
-            "install it with: pip install llmrun[anthropic]"
+            "install it with: pip install durable-llm[anthropic]"
         ) from exc
     return anthropic
 
 
 class AnthropicProvider:
-    """Calls the Anthropic Messages API and maps its failures onto llmrun's taxonomy.
+    """Calls the Anthropic Messages API and maps its failures onto durable_llm's taxonomy.
 
     Args:
         model: Default model when a call does not name one.

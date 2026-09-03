@@ -35,8 +35,8 @@ from typing import Any
 
 import pytest
 
-from llmrun.errors import PermanentError, PolicyRefusalError, TransientError
-from llmrun.providers import anthropic as adapter
+from durable_llm.errors import PermanentError, PolicyRefusalError, TransientError
+from durable_llm.providers import anthropic as adapter
 
 
 class _FakeMessages:
@@ -229,7 +229,7 @@ def test_a_dropped_caller_param_warns_while_a_reserved_one_stays_silent(
     """
     provider = adapter.AnthropicProvider(client=_FakeClient(_response()))
 
-    with caplog.at_level(logging.WARNING, logger="llmrun.providers.anthropic"):
+    with caplog.at_level(logging.WARNING, logger="durable_llm.providers.anthropic"):
         provider.complete(prompt="sys", payload="hello", max_tokens=64, step="x", temperature=0.2)
 
     warnings = [record for record in caplog.records if record.levelno >= logging.WARNING]
@@ -241,7 +241,7 @@ def test_a_dropped_caller_param_warns_while_a_reserved_one_stays_silent(
 
     caplog.clear()
 
-    with caplog.at_level(logging.WARNING, logger="llmrun.providers.anthropic"):
+    with caplog.at_level(logging.WARNING, logger="durable_llm.providers.anthropic"):
         provider.complete(prompt="sys", payload="hello", max_tokens=64, step="x")
 
     assert caplog.records == [], (
@@ -256,7 +256,7 @@ def test_the_constructed_client_never_retries_and_bounds_its_own_wait(
     """Two constructor kwargs, both of which fail invisibly if they are ever dropped.
 
     ``max_retries=0`` is the load-bearing one. The SDK retries 408/409/429/5xx twice by
-    default, inside one ``messages.create`` call — so llmrun would write **one**
+    default, inside one ``messages.create`` call — so durable_llm would write **one**
     ``llm_calls`` row for up to three billed requests. ``spent_usd`` would understate the
     invoice, a budget cap could be sailed straight past, and the library's central promise
     ("never make a second call before the first is durably recorded") would be false with no

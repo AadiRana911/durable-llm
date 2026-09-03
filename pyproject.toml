@@ -9,7 +9,7 @@ requires = ["hatchling>=1.25,<2"]
 build-backend = "hatchling.build"
 
 [project]
-name = "llmrun"
+name = "durable-llm"
 version = "0.1.0"
 description = "Crash-safe, budget-capped, idempotent multi-step LLM pipelines with all state in Postgres."
 readme = "README.md"
@@ -31,7 +31,7 @@ classifiers = [
 ]
 
 # The core is deliberately provider-free: psycopg is the only runtime dependency, so
-# `pip install llmrun` pulls in no SDKs, no HTTP client, and no ORM.
+# `pip install durable-llm` pulls in no SDKs, no HTTP client, and no ORM.
 dependencies = ["psycopg[binary]>=3.2"]
 
 [project.optional-dependencies]
@@ -51,29 +51,29 @@ dependencies = ["psycopg[binary]>=3.2"]
 anthropic = ["anthropic>=0.121,<1"]
 
 [project.urls]
-Homepage = "https://github.com/asadimtiaz/llmrun"
-Repository = "https://github.com/asadimtiaz/llmrun"
-Issues = "https://github.com/asadimtiaz/llmrun/issues"
-Documentation = "https://github.com/asadimtiaz/llmrun/blob/main/docs/DESIGN.md"
+Homepage = "https://github.com/asadimtiaz/durable-llm"
+Repository = "https://github.com/asadimtiaz/durable-llm"
+Issues = "https://github.com/asadimtiaz/durable-llm/issues"
+Documentation = "https://github.com/asadimtiaz/durable-llm/blob/main/docs/DESIGN.md"
 
 # Test and lint tooling is not part of the installable surface, so it is a dependency
 # *group* (PEP 735) rather than a published extra: `uv sync` installs it by default for
-# developers, and `pip install llmrun[dev]` cannot pull pytest into an end user's
+# developers, and `pip install durable-llm[dev]` cannot pull pytest into an end user's
 # environment because there is no such extra to ask for.
 [dependency-groups]
 dev = ["pytest>=8", "ruff>=0.6"]
 
 [project.scripts]
-llmrun = "llmrun.cli:main"
+durable-llm = "durable_llm.cli:main"
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/llmrun"]
+packages = ["src/durable_llm"]
 
 # The migration SQL lives at the repo root (see docs/DESIGN.md) so it is easy to read and
-# diff. Ship a copy inside the wheel as well, otherwise `pip install llmrun && llmrun
+# diff. Ship a copy inside the wheel as well, otherwise `pip install durable-llm && durable-llm
 # migrate` has no SQL to apply outside of a source checkout.
 [tool.hatch.build.targets.wheel.force-include]
-"migrations" = "llmrun/migrations"
+"migrations" = "durable_llm/migrations"
 
 [tool.hatch.build.targets.sdist]
 include = [
@@ -116,7 +116,7 @@ ignore = [
 ]
 
 [tool.ruff.lint.isort]
-known-first-party = ["llmrun"]
+known-first-party = ["durable_llm"]
 
 [tool.ruff.format]
 docstring-code-format = true

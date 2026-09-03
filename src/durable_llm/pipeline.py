@@ -1,6 +1,6 @@
 """The ``@pipeline`` decorator and the :class:`Pipeline` object it produces.
 
-A pipeline is an ordinary Python function that takes a :class:`~llmrun.context.RunContext`
+A pipeline is an ordinary Python function that takes a :class:`~durable_llm.context.RunContext`
 as its first argument. There is no DSL, no graph, no YAML: control flow is ``if`` and
 ``for``, because the moment durable execution requires its own dialect, the cost of using
 it exceeds the cost of the crash it was protecting you from.
@@ -32,18 +32,18 @@ from decimal import Decimal, InvalidOperation
 from typing import TYPE_CHECKING, Any, Final, overload
 from uuid import UUID
 
-from llmrun.db import connect, transaction
-from llmrun.registry import register
+from durable_llm.db import connect, transaction
+from durable_llm.registry import register
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
     import psycopg
     from psycopg.rows import DictRow
 
-    from llmrun.context import RunContext
+    from durable_llm.context import RunContext
 
 __all__ = ["DEFAULT_MAX_ATTEMPTS", "Pipeline", "pipeline"]
 
-logger = logging.getLogger("llmrun.pipeline")
+logger = logging.getLogger("durable_llm.pipeline")
 
 #: Run-level attempts when a pipeline does not say otherwise. It bounds two things at once:
 #: how many times a worker may *execute* the run (checked by the claim query, so a run that
@@ -80,7 +80,7 @@ class Pipeline:
     than this wrapper.
 
     Attributes:
-        name: Identifier stored in ``runs.pipeline`` and passed to ``llmrun enqueue``.
+        name: Identifier stored in ``runs.pipeline`` and passed to ``durable-llm enqueue``.
         fn: The undecorated function.
         budget_usd: Hard spend cap copied onto every run this pipeline enqueues. ``None``
             means unlimited, which is a deliberate opt-in rather than the default of
@@ -134,7 +134,7 @@ class Pipeline:
 
         ``ctx.input`` is the ``kwargs`` that :meth:`enqueue` serialised, round-tripped
         through ``jsonb``. A mismatch between those keys and the function's parameters
-        raises ``TypeError``, which :func:`llmrun.errors.classify` treats as ``PERMANENT``:
+        raises ``TypeError``, which :func:`durable_llm.errors.classify` treats as ``PERMANENT``:
         a run enqueued with the wrong arguments will never succeed, so retrying it five
         times would only cost five times as much to learn the same thing.
         """
@@ -160,7 +160,7 @@ class Pipeline:
                 report, and a run that lands in the wrong tenant is not something the
                 report can fix later.
             conn: An existing connection. When omitted, one is opened from
-                ``LLMRUN_DATABASE_URL`` and closed again before returning.
+                ``DURABLE_LLM_DATABASE_URL`` and closed again before returning.
             **kwargs: The pipeline function's arguments. Must be JSON-serialisable.
 
         Returns:
@@ -315,7 +315,7 @@ def _encode_input(name: str, kwargs: dict[str, Any]) -> str:
     """Serialise a run's arguments to JSON text for the ``input`` column.
 
     No ``default=`` fallback here, on purpose — not even the type-tagged one
-    :func:`llmrun.cache.canonical_json` uses. A fallback is defensible there because the
+    :func:`durable_llm.cache.canonical_json` uses. A fallback is defensible there because the
     result is only ever a *key*: the tag stops two different values collapsing onto one
     key, and the worst that remains is a stale key that misses the cache and re-bills.
     Here the JSON *is* the argument list the worker will later call the function with, so

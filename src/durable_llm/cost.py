@@ -1,6 +1,6 @@
 """Token pricing and exact cost arithmetic.
 
-Every dollar figure in llmrun originates here, and every one of them is a
+Every dollar figure in durable_llm originates here, and every one of them is a
 :class:`decimal.Decimal`. Floats are banned from money for the usual reason —
 ``0.1 + 0.2 != 0.3`` — but also for a specific one: costs are summed thousands of times
 into ``runs.spent_usd`` and then compared against a budget. Binary rounding error in that
@@ -21,7 +21,7 @@ from typing import Final
 
 __all__ = ["PRICES", "Price", "cost_of", "quantize_usd", "register_price"]
 
-logger = logging.getLogger("llmrun.cost")
+logger = logging.getLogger("durable_llm.cost")
 
 #: The scale of the ``numeric(12,6)`` money columns: one millionth of a dollar.
 _QUANTUM: Final[Decimal] = Decimal("0.000001")
@@ -54,7 +54,7 @@ class Price:
 #
 #  The numbers below are illustrative defaults so the project runs out of the box. They
 #  are NOT an authoritative price list, they are not maintained in lockstep with any
-#  vendor, and vendor pricing changes without notice. Before using llmrun's cost figures
+#  vendor, and vendor pricing changes without notice. Before using durable_llm's cost figures
 #  for billing, budgeting, chargeback, or any decision involving real money, check each
 #  model against the provider's current published pricing page and override what you find
 #  with register_price(). Treat an unverified figure here as an estimate with an unknown
@@ -90,7 +90,7 @@ def register_price(model: str, price: Price) -> None:
     """Add or replace the price of ``model``.
 
     This is the supported way to correct the placeholder table above, to price a model
-    llmrun has never heard of, or to apply a negotiated rate. Overwriting is intentional —
+    durable_llm has never heard of, or to apply a negotiated rate. Overwriting is intentional —
     prices change, and a process that has to restart to pick up a new rate is a process
     that keeps billing at the old one.
     """
@@ -115,7 +115,8 @@ def cost_of(model: str, tokens_in: int, tokens_out: int) -> Decimal:
         known = ", ".join(sorted(PRICES)) or "<none>"
         raise KeyError(
             f"no price registered for model {model!r}; "
-            f"call llmrun.cost.register_price({model!r}, Price(input_per_mtok, output_per_mtok)) "
+            "call durable_llm.cost.register_price("
+            f"{model!r}, Price(input_per_mtok, output_per_mtok)) "
             f"before running it. Known models: {known}"
         ) from None
 

@@ -1,6 +1,6 @@
 """Shared fixtures. Every test in this suite runs against a real Postgres.
 
-That is a deliberate choice, not laziness about mocking. Everything llmrun claims —
+That is a deliberate choice, not laziness about mocking. Everything durable_llm claims —
 a crashed worker resumes without re-billing, a budget cannot be exceeded by two workers
 racing, a step is either committed or it never happened — is a property of *Postgres
 transactions*. A fake database would let all four assertions pass while the real system
@@ -34,11 +34,11 @@ import psycopg
 import pytest
 from psycopg.rows import DictRow
 
-from llmrun.db import connect, default_dsn, describe_dsn, transaction
-from llmrun.migrate import MigrationError, migrate
-from llmrun.types import RunRecord, RunStatus, StepRecord
+from durable_llm.db import connect, default_dsn, describe_dsn, transaction
+from durable_llm.migrate import MigrationError, migrate
+from durable_llm.types import RunRecord, RunStatus, StepRecord
 
-logger = logging.getLogger("llmrun.tests")
+logger = logging.getLogger("durable_llm.tests")
 
 # --------------------------------------------------------------------------------------
 # SQL. Every statement here is a module-level literal with %s placeholders: no f-strings,
@@ -115,10 +115,10 @@ _SELECT_PROGRESS = """
 """
 
 _SKIP_HINT = (
-    "llmrun's tests need a real Postgres — the crash-safety guarantees under test are "
+    "durable_llm's tests need a real Postgres — the crash-safety guarantees under test are "
     "properties of Postgres transactions, so there is nothing to assert against a mock.\n"
     "Start one with:  make up\n"
-    "Or point LLMRUN_DATABASE_URL at your own Postgres 17."
+    "Or point DURABLE_LLM_DATABASE_URL at your own Postgres 17."
 )
 
 
@@ -129,7 +129,7 @@ _SKIP_HINT = (
 
 @pytest.fixture(scope="session")
 def database_url() -> str:
-    """The DSN under test: ``$LLMRUN_DATABASE_URL``, or the docker-compose default."""
+    """The DSN under test: ``$DURABLE_LLM_DATABASE_URL``, or the docker-compose default."""
     return default_dsn()
 
 
@@ -200,7 +200,7 @@ def conn(_migrated_database: str) -> Iterator[psycopg.Connection[DictRow]]:
 class Database:
     """Query helpers over the four tables, so tests assert on facts rather than on SQL.
 
-    Every method runs inside :func:`llmrun.db.transaction`, i.e. commits before returning.
+    Every method runs inside :func:`durable_llm.db.transaction`, i.e. commits before returning.
     That matters for the chaos suite: its polling loops must observe rows committed by a
     *worker subprocess*, and a long-lived read transaction on this connection would keep
     handing back a stale snapshot.
@@ -302,7 +302,7 @@ class Database:
         """The newest run for a tenant — how the chaos suite finds the run the CLI queued.
 
         Reading the id back from the database rather than parsing it out of the CLI's
-        stdout keeps these tests decoupled from how ``llmrun enqueue`` formats its output.
+        stdout keeps these tests decoupled from how ``durable-llm enqueue`` formats its output.
         """
         with transaction(self.conn) as cur:
             cur.execute(_SELECT_LATEST_RUN, (tenant_id,))

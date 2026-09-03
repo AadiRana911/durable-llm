@@ -1,6 +1,6 @@
 """SQL migration runner.
 
-Deliberately about eighty lines of logic instead of a dependency: llmrun has four tables
+Deliberately about eighty lines of logic instead of a dependency: durable_llm has four tables
 and forward-only migrations, which is well below the threshold where Alembic earns its
 keep. What it does buy is the parts people actually get wrong — one transaction per file,
 an advisory lock so two workers booting at once cannot both apply ``0001``, and a loud
@@ -21,7 +21,7 @@ from pathlib import Path
 import psycopg
 from psycopg.rows import DictRow, tuple_row
 
-from llmrun.db import transaction
+from durable_llm.db import transaction
 
 __all__ = [
     "MIGRATIONS_DIR_ENV",
@@ -30,21 +30,23 @@ __all__ = [
     "migrate",
 ]
 
-logger = logging.getLogger("llmrun.migrate")
+logger = logging.getLogger("durable_llm.migrate")
 
-MIGRATIONS_DIR_ENV = "LLMRUN_MIGRATIONS_DIR"
+MIGRATIONS_DIR_ENV = "DURABLE_LLM_MIGRATIONS_DIR"
 """Escape hatch for deployments that ship the .sql files somewhere unusual."""
 
-_PACKAGE = "llmrun"
+_PACKAGE = "durable_llm"
 
 # How far up from this file to look for a sibling ``migrations/`` directory. Three levels
-# covers ``src/llmrun/`` -> ``src/`` -> repository root; going further risks matching an
+# covers ``src/durable_llm/`` -> ``src/`` -> repository root; going further risks matching an
 # unrelated directory somewhere up the filesystem.
 _SEARCH_DEPTH = 3
 
 # Session-level advisory lock guarding the whole migrate() call, so concurrently starting
 # workers serialise instead of racing to apply the same file. The key is arbitrary but must
-# be stable and unlikely to collide: int.from_bytes(sha256(b"llmrun.schema_migrations")[:8]).
+# be stable and unlikely to collide. It was originally derived from
+# ``sha256(b"llmrun.schema_migrations")`` and deliberately survives the pre-release rename:
+# changing it would let an old and a renamed process take different locks against one database.
 _ADVISORY_LOCK_KEY = 7026850041296117638
 
 # The runner owns this table: it cannot be created by a migration whose application it is
@@ -84,8 +86,8 @@ def default_migrations_dir() -> Path:
 
     Resolution order, first hit wins:
 
-    1. ``$LLMRUN_MIGRATIONS_DIR``.
-    2. ``llmrun/migrations`` inside the installed package, via :mod:`importlib.resources` —
+    1. ``$DURABLE_LLM_MIGRATIONS_DIR``.
+    2. ``durable_llm/migrations`` inside the installed package, via :mod:`importlib.resources` —
        this is the wheel case, and it works only if the build force-includes the .sql files
        into the package.
     3. A ``migrations/`` directory found by walking up from this file — the source-checkout
@@ -160,10 +162,10 @@ def _candidate_dirs() -> list[Path]:
 
     try:
         anchor = resources.files(_PACKAGE)
-    except (ImportError, TypeError):  # pragma: no cover - only when llmrun is not importable
+    except (ImportError, TypeError):  # pragma: no cover - only when durable_llm is not importable
         anchor = None
     if isinstance(anchor, Path):
-        # A zip-imported package yields a non-Path Traversable; llmrun needs a real
+        # A zip-imported package yields a non-Path Traversable; durable_llm needs a real
         # directory here, and a zipped install is out of scope.
         candidates.append(anchor / "migrations")
 

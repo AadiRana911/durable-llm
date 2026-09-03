@@ -1,11 +1,11 @@
-# llmrun
+# durable-llm
 
 Your 40-step enrichment pipeline dies at step 38. A worker OOMs, a pod is evicted, the
 database fails over — it does not matter which. You restart it, and it starts again at step 1:
 it re-runs all 37 steps that had already succeeded, re-issues every model call inside them, and
 your provider bills you for all of them a second time. The output is eventually correct. The
 invoice is not. This happens for one boring reason: the pipeline's progress lived in a Python
-stack frame, and stack frames do not survive `SIGKILL`. llmrun moves that progress into
+stack frame, and stack frames do not survive `SIGKILL`. durable-llm moves that progress into
 Postgres. Every step is checkpointed before it returns, every model call is written to a ledger
 before the next one is issued, and a restarted worker replays from the ledger instead of from
 the provider. Four tables, one runtime dependency, a CLI, and no new infrastructure.
@@ -32,14 +32,14 @@ handling around LLM features — for B2B SaaS teams; details at the bottom.
 ## Quickstart: 60 seconds, no API key
 
 You need Docker and [uv](https://docs.astral.sh/uv/). Nothing else — in particular, **no
-provider API key and no network access to any model**. llmrun ships a deterministic `echo`
+provider API key and no network access to any model**. durable-llm ships a deterministic `echo`
 provider whose responses are a pure function of `sha256(request)`. It is not a mock bolted on
 for tests; it is the provider the demo and the crash test run against, which is what
 makes this a sixty-second experience rather than a signup flow.
 
 ```bash
-git clone https://github.com/asadimtiaz/llmrun.git
-cd llmrun
+git clone https://github.com/asadimtiaz/durable-llm.git
+cd durable-llm
 make up      # Postgres 17 in Docker on port 55432, then applies migrations
 make demo    # enqueues a 12-step pipeline, drains it, prints the run
 ```
@@ -64,7 +64,7 @@ applied 0003_integrity_and_pacing
 ==> draining the queue with the echo provider (no API key, no network)
 8d1f8f6d-b7d8-401f-b132-c68b8cd19257
 
-==> llmrun runs show 8d1f8f6d-b7d8-401f-b132-c68b8cd19257
+==> durable-llm runs show 8d1f8f6d-b7d8-401f-b132-c68b8cd19257
 
 RUN 8d1f8f6d-b7d8-401f-b132-c68b8cd19257
 ============================================================================================
@@ -131,7 +131,7 @@ What that test actually does:
 1. Enqueue the 12-step example pipeline and run it to completion, uninterrupted. Record the
    output and `SELECT count(*) FROM llm_calls WHERE run_id = %s AND cached = false` — the number
    of real, billed provider calls. That is the **baseline**.
-2. Enqueue an identical run. Start `llmrun worker` as a real subprocess.
+2. Enqueue an identical run. Start `durable-llm worker` as a real subprocess.
 3. Poll until roughly half the steps are `succeeded` **and** a provider call has committed to
    the ledger whose step has not yet been checkpointed, then `SIGKILL` the worker's process
    group. No `finally` block runs. No cleanup happens. The run is stranded in `running` with a
@@ -158,7 +158,7 @@ The killed run's ledger looks like this:
 table are cut for length; `…` marks where ledger rows repeat.*</sub>
 
 ```console
-$ llmrun runs show 6abe7fd6
+$ durable-llm runs show 6abe7fd6
 
 RUN 6abe7fd6-b687-4adc-a655-75f07d0bae7d
 ============================================================================================
@@ -207,8 +207,8 @@ produced that result, and it is worth being precise about which did what:
 
 **The honest caveat.** If a process dies in the microseconds between the provider's HTTP
 response arriving and the local `INSERT` committing, that call was billed by the provider and
-llmrun has no record of it — nothing outside the provider can fix that without provider-side
-idempotency keys. What llmrun guarantees is narrower and still worth having: it never issues a
+durable-llm has no record of it — nothing outside the provider can fix that without provider-side
+idempotency keys. What durable-llm guarantees is narrower and still worth having: it never issues a
 second call for work that is already durably recorded, and it never loses a response you were
 billed for. The sequencing rule that makes this true is that a completed call is committed
 **before** the next one is issued, so the exposure is one call wide, not one pipeline wide.
@@ -219,7 +219,7 @@ billed for. The sequencing rule that makes this true is that a completed call is
 
 ### 1. Checkpointed steps — resume an LLM pipeline after a crash
 
-`ctx.step(name, fn, *args, **kwargs)` runs `fn` once per run, ever. Before executing it, llmrun
+`ctx.step(name, fn, *args, **kwargs)` runs `fn` once per run, ever. Before executing it, durable-llm
 hashes `(name, args, kwargs)` and looks for a `steps` row:
 
 - row exists, `status='succeeded'`, hash matches → return the stored output, do not execute
@@ -321,7 +321,7 @@ drift apart, and the table can be asserted against this document in a three-line
 Note that the three non-retryable classes end in three *different* terminal statuses.
 `pending_review` is not `failed`: a refusal is a run that needs a human, not a run that broke.
 `halted_budget` is not `failed` either: "we stopped you" should never be confused with "it broke"
-when you are reading a dashboard at 2am. And anything llmrun does not recognise — a `KeyError`, a
+when you are reading a dashboard at 2am. And anything durable-llm does not recognise — a `KeyError`, a
 typo in a model name, any bug in your own pipeline code — classifies as `permanent`. The
 conservative direction is deliberate: mislabelling a real bug as transient buys you five slow,
 billed repetitions of the same crash, while mislabelling a blip as permanent buys you one honest
@@ -335,7 +335,7 @@ human" is a first-class outcome rather than an exception you invent.
 Every billed call records its model, tokens in, tokens out, cost, and response. Valid ledger rows
 are never updated or deleted, so `SUM(cost_usd)` is the authoritative answer to "what did this
 run cost" rather than a derived guess. There is one defensive recovery path: if an existing
-billed row has no usable response text, llmrun buys a replacement, repairs that unusable row in
+billed row has no usable response text, durable-llm buys a replacement, repairs that unusable row in
 place, and adds the new cost to the old one. The total still accounts for both payments. Money is
 `decimal.Decimal` end to end, quantised to six decimal places with `ROUND_HALF_UP` to match the
 `numeric(12,6)` columns — never `float`. Not pedantry: those costs are summed thousands of times
@@ -349,7 +349,7 @@ tenant is a `GROUP BY` rather than a project:
 placeholders, not a quote.*</sub>
 
 ```console
-$ llmrun costs --tenant acme
+$ durable-llm costs --tenant acme
 
 COSTS  (tenant: acme)
 ============================================================================================
@@ -372,7 +372,7 @@ the totals would report tokens nobody bought.
 ### 5. Budget caps that halt
 
 A budget is per run and set at the pipeline: `@pipeline(budget_usd="2.50")`, `NULL` for
-unlimited. Before every call, llmrun projects the worst case — input tokens estimated from
+unlimited. Before every call, durable-llm projects the worst case — input tokens estimated from
 prompt length, output assumed to be the full `max_tokens` — and takes `SELECT budget_usd,
 spent_usd ... FOR UPDATE` on the run. If `spent + projected > budget`, it raises before the
 network call, and the run terminates as `halted_budget`.
@@ -387,7 +387,7 @@ before the next one. The receipt is always committed, even when it is the call t
 the line: a cap that loses the record of what it failed to stop is worse than one that
 reports it a call late.
 
-**So the honest guarantee is bounded, not absolute.** llmrun stops a run one call after it
+**So the honest guarantee is bounded, not absolute.** durable-llm stops a run one call after it
 crosses its cap, not zero. Making that zero requires a real tokeniser on the input side —
 worth doing, not done here. And a `budget` failure is non-retryable by construction, because
 retrying past a cap is precisely the behaviour the cap exists to stop.
@@ -398,12 +398,12 @@ retrying past a cap is precisely the behaviour the cap exists to stop.
 
 The whole API is a decorator and three methods on the context. There is no DSL, no graph object
 and no builder — a pipeline is a Python function, and it stays callable as one. `load_thread` and
-`Facts` below are your own code; llmrun has no opinion about either.
+`Facts` below are your own code; durable-llm has no opinion about either.
 
 ```python
 from __future__ import annotations
 
-from llmrun import RunContext, pipeline
+from durable_llm import RunContext, pipeline
 
 EXTRACT = "Extract every decision and its owner. Reply with JSON only."
 
@@ -439,11 +439,11 @@ run_id = summarise_thread.enqueue(tenant_id="acme", thread_id="t-42")
 ```
 
 ```bash
-llmrun enqueue summarise_thread --tenant acme \
+durable-llm enqueue summarise_thread --tenant acme \
     --json '{"thread_id": "t-42"}' \
     --import examples/summarise_thread.py
 
-llmrun worker --import examples/summarise_thread.py     # claims it and runs it
+durable-llm worker --import examples/summarise_thread.py     # claims it and runs it
 ```
 
 `examples/summarise_thread.py` in this repo is the twelve-step version the demo and the chaos
@@ -536,12 +536,12 @@ contract for this repository:
 
 Because they are not competitors, and a fair reading of both makes that obvious. LangChain,
 LlamaIndex and the rest are **composition** tools: prompt templates, retrievers, tool loops,
-output parsers, a common interface across model vendors. llmrun composes nothing. It has no
+output parsers, a common interface across model vendors. durable-llm composes nothing. It has no
 prompt management, no agent loop, no vector anything, and no opinion whatsoever about what your
 prompts say. It makes composition **durable**: checkpoint, ledger, budget, taxonomy.
 
 They stack cleanly. Call a LangChain chain inside `ctx.step("classify", chain.invoke, doc)` and
-it becomes resumable and checkpointed without llmrun knowing what a chain is. The only surface
+it becomes resumable and checkpointed without durable-llm knowing what a chain is. The only surface
 that overlaps is `ctx.llm()`, and you are free not to use it — you lose per-call idempotency and
 cost attribution for those calls and keep everything else.
 
@@ -549,7 +549,7 @@ The more honest comparison is with durable execution engines: Temporal, Restate,
 better than this at the general problem, and if you already run one, use it — the part of this
 repository worth stealing is then the failure taxonomy in `errors.py` and the dual-purpose
 ledger, both of which are LLM-specific and neither of which a general workflow engine gives you.
-llmrun exists for teams who want crash-safe LLM pipelines without adding a workflow cluster to
+durable-llm exists for teams who want crash-safe LLM pipelines without adding a workflow cluster to
 their runbook, and who already have a Postgres.
 
 ---
@@ -571,10 +571,10 @@ no ORM, no migration framework, no HTTP client, no model SDK. `anthropic` is an 
 v0.1 is not on PyPI yet. Install from a checkout:
 
 ```bash
-git clone https://github.com/asadimtiaz/llmrun.git
-cd llmrun
+git clone https://github.com/asadimtiaz/durable-llm.git
+cd durable-llm
 
-uv sync                    # llmrun + psycopg, plus pytest and ruff (the `dev` group)
+uv sync                    # durable-llm + psycopg, plus pytest and ruff (the `dev` group)
 uv sync --extra anthropic  # add the real provider adapter
 uv sync --no-dev           # runtime only, as a consumer would install it
 ```
@@ -582,7 +582,7 @@ uv sync --no-dev           # runtime only, as a consumer would install it
 Then apply the schema (idempotent — re-running is a no-op):
 
 ```bash
-llmrun migrate
+durable-llm migrate
 ```
 
 ## Configuration
@@ -593,8 +593,8 @@ automatically, and the library itself only ever reads real environment variables
 
 | variable | default | what it does |
 |---|---|---|
-| `LLMRUN_DATABASE_URL` | `postgresql://llmrun:llmrun@localhost:55432/llmrun` | connection string for every command and for the test suite |
-| `LLMRUN_PROVIDER` | `echo` | default adapter when `--provider` is not passed |
+| `DURABLE_LLM_DATABASE_URL` | `postgresql://durable_llm:durable_llm@localhost:55432/durable_llm` | connection string for every command and for the test suite |
+| `DURABLE_LLM_PROVIDER` | `echo` | default adapter when `--provider` is not passed |
 | `ANTHROPIC_API_KEY` | *(empty)* | only read when the Anthropic adapter is active |
 
 Nothing in the default demo, test or chaos paths touches the network.
@@ -604,7 +604,7 @@ Nothing in the default demo, test or chaos paths touches the network.
 ```bash
 uv sync --extra anthropic
 export ANTHROPIC_API_KEY=sk-ant-...
-llmrun worker --provider anthropic --import examples/summarise_thread.py
+durable-llm worker --provider anthropic --import examples/summarise_thread.py
 ```
 
 The adapter defaults to `claude-sonnet-5`, reads token counts from `response.usage`, and maps SDK
@@ -637,13 +637,13 @@ remain two different ledger entries.
 
 **Check the prices before you trust the numbers.** `cost.py` ships a placeholder price table so
 the project runs out of the box. Those figures are illustrative, are not maintained in lockstep
-with any vendor, and vendor pricing changes without notice. Before using llmrun's cost output for
+with any vendor, and vendor pricing changes without notice. Before using durable-llm's cost output for
 billing, budgeting or chargeback, check each model against the provider's current published
 pricing and override what you find:
 
 ```python
 from decimal import Decimal
-from llmrun.cost import Price, register_price
+from durable_llm.cost import Price, register_price
 
 register_price("claude-sonnet-5", Price(Decimal("3"), Decimal("15")))  # USD per 1M tokens
 ```
@@ -656,13 +656,13 @@ discrepancy would surface as an invoice.
 
 | command | what it does |
 |---|---|
-| `llmrun migrate [--migrations-dir DIR]` | apply SQL migrations in filename order, verify recorded checksums, and exit idempotently |
-| `llmrun worker [--once] [--import M] [--provider echo\|anthropic] [--lease-seconds N] [--poll-interval S] [--model M] [--worker-id ID]` | claim and execute runs; `SIGTERM` finishes the current run and exits |
-| `llmrun enqueue PIPELINE --tenant T --json '{"thread_id": "t1"}' [--import M]` | queue a run, print its id |
-| `llmrun runs list [--tenant T] [--status S] [--limit N]` | recent runs and their statuses |
-| `llmrun runs show RUN_ID` | run header, step table, per-call cost ledger with the `cached` column; `RUN_ID` may be any unambiguous prefix |
-| `llmrun costs [--tenant T] [--since WHEN] [--until WHEN]` | spend grouped by pipeline and model, including cache savings; defaults to the last 30 days |
-| `llmrun health` | check database reachability and report migrations, queue depth, running work, and stranded runs |
+| `durable-llm migrate [--migrations-dir DIR]` | apply SQL migrations in filename order, verify recorded checksums, and exit idempotently |
+| `durable-llm worker [--once] [--import M] [--provider echo\|anthropic] [--lease-seconds N] [--poll-interval S] [--model M] [--worker-id ID]` | claim and execute runs; `SIGTERM` finishes the current run and exits |
+| `durable-llm enqueue PIPELINE --tenant T --json '{"thread_id": "t1"}' [--import M]` | queue a run, print its id |
+| `durable-llm runs list [--tenant T] [--status S] [--limit N]` | recent runs and their statuses |
+| `durable-llm runs show RUN_ID` | run header, step table, per-call cost ledger with the `cached` column; `RUN_ID` may be any unambiguous prefix |
+| `durable-llm costs [--tenant T] [--since WHEN] [--until WHEN]` | spend grouped by pipeline and model, including cache savings; defaults to the last 30 days |
+| `durable-llm health` | check database reachability and report migrations, queue depth, running work, and stranded runs |
 
 Pipelines are registered by importing the module that defines them, which is what `--import`
 does; it accepts a dotted path or a file path.
@@ -680,7 +680,7 @@ make, so it is not optional. What is not built yet, stated plainly:
   `Provider` protocol is one method, so a third-party adapter is a small file — but it will not
   live in this repository.
 - **Budgets are per run**, not per tenant per month. Aggregate spend across runs is
-  reporting-only today (`llmrun costs`); there is no rolling tenant cap that refuses to enqueue.
+  reporting-only today (`durable-llm costs`); there is no rolling tenant cap that refuses to enqueue.
 - **Steps within a run are sequential.** Concurrency comes from running multiple workers across
   runs. There is no fan-out primitive.
 - **Leases renew on checkpoint progress, not on a timer.** Starting and successfully finishing a
@@ -690,7 +690,7 @@ make, so it is not optional. What is not built yet, stated plainly:
   displaced worker stops when it sees the lease has moved — but the in-flight step may still be
   *executed* twice, so any side effect outside Postgres happens twice. Set the lease above your
   slowest step.
-- **No metrics exporter, no tracing, no web UI.** Levelled logging under `llmrun.*` loggers —
+- **No metrics exporter, no tracing, no web UI.** Levelled logging under `durable_llm.*` loggers —
   human-readable lines to stderr with an ISO-8601 UTC timestamp, process id, logger name, and the
   run id in run-specific messages — and SQL. The lines are still not JSON and there is no event
   schema, metrics endpoint, or trace context, so richer correlation requires adding your own
@@ -712,10 +712,10 @@ conversation, not a patch.
 
 MIT. See [LICENSE](LICENSE).
 
-**Dependency licences.** The MIT header covers llmrun's own code and nothing else — the licence
+**Dependency licences.** The MIT header covers durable-llm's own code and nothing else — the licence
 that governs a *distribution* is the union of everything shipped inside it. `psycopg` and
 `psycopg-binary` — the two distributions behind `psycopg[binary]`, the only *required* runtime
-dependency — are **LGPL-3.0-only**, so anyone who redistributes llmrun with them (a wheel that
+dependency — are **LGPL-3.0-only**, so anyone who redistributes durable-llm with them (a wheel that
 vendors them, a container image, an installer) inherits the LGPL obligations for those parts:
 keep them replaceable, and make their source available on request.
 Importing them at run time from a normal `uv sync` is the ordinary dynamic-linking case and is
@@ -730,12 +730,12 @@ Written by Asad Imtiaz. I build this kind of plumbing — durability, cost contr
 handling around LLM features — for B2B SaaS teams whose model spend became a line item before
 anyone had planned for it. If the failure at the top of this page is one you have actually had,
 I am happy to talk about it either way —
-[open an issue](https://github.com/asadimtiaz/llmrun/issues), or reach me at the address on my
+[open an issue](https://github.com/asadimtiaz/durable-llm/issues), or reach me at the address on my
 GitHub profile.
 
 <!-- BEFORE PUBLISHING: replace the line above with a direct contact — an email address or a
      LinkedIn URL — and put the same address in pyproject.toml's `authors` entry so it survives
      into the package metadata. "Reach me via my profile" is one hop more than a reader who has
      just finished 600 lines should have to make. Also verify the clone URL used throughout
-     this file (`github.com/asadimtiaz/llmrun`) actually resolves; it is currently a
+     this file (`github.com/asadimtiaz/durable-llm`) actually resolves; it is currently a
      placeholder, and `git ls-remote` on it returns "Repository not found". -->

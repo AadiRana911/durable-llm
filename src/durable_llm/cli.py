@@ -1,14 +1,14 @@
-"""``llmrun`` — the command line interface.
+"""``durable-llm`` — the command line interface.
 
 Seven commands, one job each::
 
-    llmrun migrate                       apply migrations/*.sql
-    llmrun worker                        claim queued runs and execute them
-    llmrun enqueue PIPELINE --tenant T   put a run on the queue
-    llmrun runs list                     what has run, and how it ended
-    llmrun runs show RUN_ID              one run in full: steps and the cost ledger
-    llmrun costs                         spend by pipeline and model, and what caching saved
-    llmrun health                        is the database reachable, and what is backed up
+    durable-llm migrate                       apply migrations/*.sql
+    durable-llm worker                        claim queued runs and execute them
+    durable-llm enqueue PIPELINE --tenant T   put a run on the queue
+    durable-llm runs list                     what has run, and how it ended
+    durable-llm runs show RUN_ID              one run in full: steps and the cost ledger
+    durable-llm costs                         spend by pipeline and model, and what caching saved
+    durable-llm health                        is the database reachable, and what is backed up
 
 ``runs show`` is the command this project exists to be able to print. It puts the step
 timeline next to the per-call cost ledger and marks every call that was replayed from the
@@ -19,7 +19,7 @@ Conventions in here:
 
 * Exit codes: ``0`` success, ``1`` the command failed, ``2`` bad usage.
 * Results go to stdout via :func:`_emit`; progress and diagnostics go to stderr via
-  :mod:`logging`. That split is what lets ``run_id=$(llmrun enqueue ...)`` work while the
+  :mod:`logging`. That split is what lets ``run_id=$(durable-llm enqueue ...)`` work while the
   operator still sees what happened.
 * Tables are laid out with ``str.ljust``/``str.rjust``. No ``rich``, no ``tabulate`` — a
   fifteen-line formatter is not worth a dependency, and this output has to survive being
@@ -44,15 +44,15 @@ from uuid import UUID
 
 import psycopg
 
-from llmrun import __version__
-from llmrun.db import DEFAULT_DSN_ENV, connect, default_dsn, describe_dsn, transaction
-from llmrun.errors import LLMRunError
-from llmrun.migrate import MigrationError, migrate
-from llmrun.providers.base import PROVIDER_NAMES, get_provider
-from llmrun.registry import get as get_pipeline
-from llmrun.registry import load_module
-from llmrun.types import RUN_STATUSES
-from llmrun.worker import (
+from durable_llm import __version__
+from durable_llm.db import DEFAULT_DSN_ENV, connect, default_dsn, describe_dsn, transaction
+from durable_llm.errors import LLMRunError
+from durable_llm.migrate import MigrationError, migrate
+from durable_llm.providers.base import PROVIDER_NAMES, get_provider
+from durable_llm.registry import get as get_pipeline
+from durable_llm.registry import load_module
+from durable_llm.types import RUN_STATUSES
+from durable_llm.worker import (
     DEFAULT_LEASE_SECONDS,
     DEFAULT_POLL_INTERVAL,
     default_worker_id,
@@ -66,17 +66,17 @@ if TYPE_CHECKING:
 
     from psycopg.rows import DictRow
 
-    from llmrun.pipeline import Pipeline
+    from durable_llm.pipeline import Pipeline
 
 __all__ = ["build_parser", "main"]
 
-logger = logging.getLogger("llmrun.cli")
+logger = logging.getLogger("durable_llm.cli")
 
 EXIT_OK = 0
 EXIT_ERROR = 1
 EXIT_USAGE = 2
 
-PROVIDER_ENV = "LLMRUN_PROVIDER"
+PROVIDER_ENV = "DURABLE_LLM_PROVIDER"
 """Default for ``--provider``. Mirrors .env.example, so ``make demo`` needs no flags."""
 
 _DEFAULT_LIST_LIMIT = 20
@@ -86,12 +86,12 @@ _HEX = frozenset("0123456789abcdef-")
 
 _EPILOG = """\
 examples:
-  llmrun migrate
-  llmrun enqueue summarise_thread --tenant acme --json '{"thread_id": "t1"}' \\
+  durable-llm migrate
+  durable-llm enqueue summarise_thread --tenant acme --json '{"thread_id": "t1"}' \\
       --import examples/summarise_thread.py
-  llmrun worker --once --provider echo --import examples/summarise_thread.py
-  llmrun runs show 4a0c8a1e
-  llmrun costs --tenant acme
+  durable-llm worker --once --provider echo --import examples/summarise_thread.py
+  durable-llm runs show 4a0c8a1e
+  durable-llm costs --tenant acme
 """
 
 
@@ -130,7 +130,7 @@ _RUN_BY_ID_SQL = "SELECT * FROM runs WHERE id = %s"
 # `text_pattern_ops`, which is what makes an anchored LIKE genuinely indexable.
 _RUN_BY_PREFIX_SQL = "SELECT * FROM runs WHERE id::text LIKE %s ORDER BY created_at LIMIT 5"
 
-# One row, four numbers, for `llmrun health`. `stranded` counts runs that have used every
+# One row, four numbers, for `durable-llm health`. `stranded` counts runs that have used every
 # allowed execution and are waiting for the worker's sweep to give them a terminal status —
 # the population that used to accumulate invisibly.
 _HEALTH_SQL = """
@@ -218,7 +218,7 @@ ORDER BY is_total, spend_usd DESC, pipeline, model
 """
 
 DEFAULT_COSTS_WINDOW_DAYS = 30
-"""How far back ``llmrun costs`` looks when ``--since`` is not given.
+"""How far back ``durable-llm costs`` looks when ``--since`` is not given.
 
 A default rather than "everything" because the ledger is append-only and unpruned: an
 all-time aggregate is a query whose cost grows forever, and the answer people actually want
@@ -550,7 +550,7 @@ def _cmd_worker(args: argparse.Namespace) -> int:
             "Install it with `uv sync --extra anthropic`."
         ) from exc
     except ValueError as exc:
-        # argparse's `choices` covers the flag, but not the LLMRUN_PROVIDER environment
+        # argparse's `choices` covers the flag, but not the DURABLE_LLM_PROVIDER environment
         # variable it defaults from — so an unknown name can still arrive here, and it is
         # bad usage rather than a runtime failure.
         raise _UsageError(str(exc)) from exc
@@ -956,7 +956,7 @@ def _global_options() -> argparse.ArgumentParser:
 
     ``argparse.SUPPRESS`` is load-bearing. A subparser writes its own defaults into the
     same namespace *after* the top-level parser has filled it, so with an ordinary default
-    ``llmrun -v worker`` would parse the ``-v`` and then silently overwrite it with ``0``.
+    ``durable-llm -v worker`` would parse the ``-v`` and then silently overwrite it with ``0``.
     Suppressed defaults leave the attribute absent instead, which is why every read below
     goes through ``getattr(args, ..., fallback)``.
     """
@@ -988,7 +988,7 @@ def build_parser() -> argparse.ArgumentParser:
     """Assemble the argument parser. Separate from :func:`main` so tests can inspect it."""
     shared = _global_options()
     parser = argparse.ArgumentParser(
-        prog="llmrun",
+        prog="durable-llm",
         parents=[shared],
         description=(
             "Run multi-step LLM pipelines that survive crashes, do not double-bill on "
@@ -997,7 +997,7 @@ def build_parser() -> argparse.ArgumentParser:
         epilog=_EPILOG,
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
-    parser.add_argument("--version", action="version", version=f"llmrun {__version__}")
+    parser.add_argument("--version", action="version", version=f"durable-llm {__version__}")
 
     sub = parser.add_subparsers(dest="command", metavar="COMMAND", required=True)
 
@@ -1208,10 +1208,10 @@ def main(argv: Sequence[str] | None = None) -> int:
         return args.func(args)
     except _UsageError as exc:
         logger.error("%s", exc)
-        logger.error("run `llmrun %s --help` for usage", args.command)
+        logger.error("run `durable-llm %s --help` for usage", args.command)
         return EXIT_USAGE
     except BrokenPipeError:
-        # `llmrun runs show ... | head` closes stdout early. Not an error — but the
+        # `durable-llm runs show ... | head` closes stdout early. Not an error — but the
         # interpreter must not try to flush the dead pipe on the way out.
         with suppress(OSError):
             sys.stdout.close()
@@ -1236,7 +1236,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         logger.debug("traceback", exc_info=exc)
         return EXIT_ERROR
     except Exception:
-        # Last resort: a bug in llmrun itself. Show the traceback — an unexplained exit
+        # Last resort: a bug in durable_llm itself. Show the traceback — an unexplained exit
         # code helps nobody.
         logger.exception("unexpected error")
         return EXIT_ERROR

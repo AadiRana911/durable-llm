@@ -1,18 +1,18 @@
-# Local Postgres for llmrun. Nothing else is required to run this project.
+# Local Postgres for durable-llm. Nothing else is required to run this project.
 #
 # Fixed project name so `docker compose exec db ...` and the named volume resolve the same
 # way no matter what the checkout directory is called.
-name: llmrun
+name: durable-llm
 
 services:
   db:
     image: postgres:17
-    container_name: llmrun-db
+    container_name: durable-llm-db
     environment:
-      POSTGRES_USER: llmrun
+      POSTGRES_USER: durable_llm
       # Overridable so the credential is not hardcoded in a tracked file, but it still
-      # defaults to `llmrun` because two other tracked files spell that password out: the
-      # LLMRUN_DATABASE_URL in .env.example, and the fallback of the same name in the
+      # defaults to `durable_llm` because two other tracked files spell that password out: the
+      # DURABLE_LLM_DATABASE_URL in .env.example, and the fallback of the same name in the
       # Makefile that applies whenever there is no .env to override it. Setting
       # POSTGRES_PASSWORD without fixing whichever of those your setup actually uses leaves
       # every command authenticating with the old credential, so change them together.
@@ -21,8 +21,8 @@ services:
       # pgdata below is a named volume that survives `docker compose down`. On a checkout
       # that has already run once, a new password here is silently ignored and the original
       # one stays in force until the volume is dropped (`docker compose down -v`).
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-llmrun}
-      POSTGRES_DB: llmrun
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-durable_llm}
+      POSTGRES_DB: durable_llm
       # Deterministic collation so ORDER BY in `runs list` sorts identically everywhere.
       POSTGRES_INITDB_ARGS: "--encoding=UTF8 --locale=C"
     ports:
@@ -41,7 +41,7 @@ services:
       # -h 127.0.0.1 matters: during first-boot initdb the entrypoint runs a temporary
       # server on the unix socket only, so a socket-based probe reports "ready" before the
       # database is actually accepting client connections.
-      test: ["CMD-SHELL", "pg_isready -q -h 127.0.0.1 -p 5432 -U llmrun -d llmrun"]
+      test: ["CMD-SHELL", "pg_isready -q -h 127.0.0.1 -p 5432 -U durable_llm -d durable_llm"]
       interval: 2s
       timeout: 3s
       retries: 30
@@ -51,4 +51,4 @@ services:
 
 volumes:
   pgdata:
-    name: llmrun-pgdata
+    name: durable-llm-pgdata

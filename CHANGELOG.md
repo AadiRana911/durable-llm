@@ -1,11 +1,11 @@
 # Changelog
 
-All notable changes to llmrun are documented here.
+All notable changes to durable-llm are documented here.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this
 project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-Scope note: the version promise covers the names exported from `llmrun/__init__.py` and the
+Scope note: the version promise covers the names exported from `durable_llm/__init__.py` and the
 database schema. Anything else — the worker loop, the CLI's exact output, the migration
 runner — may change in a patch release without an entry here, and entries that mention those
 modules are informational rather than contractual.
@@ -16,6 +16,12 @@ First round of fixes following a full code review. Nothing has been released yet
 breaking changes below are recorded for anyone tracking `main` rather than a tag.
 
 ### Breaking
+
+- **The project is now `durable-llm`.** Install the `durable-llm` distribution, import the
+  `durable_llm` package, run the `durable-llm` command, and configure it with
+  `DURABLE_LLM_*` environment variables. No legacy aliases are shipped because no version of
+  the old name was published. The three existing migration files remain byte-for-byte
+  unchanged so databases that already recorded their checksums continue to validate.
 
 - **Idempotency keys changed for every call, and `cache` now has two renderers.**
   `cache.canonical_json` no longer falls back to `default=str` for values JSON cannot
@@ -60,10 +66,10 @@ breaking changes below are recorded for anyone tracking `main` rather than a tag
 - **Provider latency.** `llm_calls.duration_ms` records how long each provider call took.
 - **Built-package CI gate.** CI now builds the wheel and source distribution, installs the
   wheel outside the checkout, applies its bundled migrations to a clean Postgres service, and
-  runs `llmrun health`. This catches source-only files that an editable checkout can hide.
+  runs `durable-llm health`. This catches source-only files that an editable checkout can hide.
 - **`Provider`, `get_provider`, `Price` and `register_price` are now part of the top-level
   facade.** Writing a custom provider and correcting the placeholder price table are ordinary
-  configuration, so they belong inside the stability promise. `import llmrun` still pulls in
+  configuration, so they belong inside the stability promise. `import durable_llm` still pulls in
   no provider SDK: `get_provider` imports `anthropic` inside its own body.
 - **`CHANGELOG.md`** — this file.
 
@@ -81,7 +87,7 @@ breaking changes below are recorded for anyone tracking `main` rather than a tag
   from `@pipeline(...)`, so on a package shipping `py.typed` every user of either form saw
   errors. `@overload` declarations now discriminate on whether `fn` was supplied; the union
   survives only on the implementation signature.
-- **Error details are truncated in one place.** `llmrun.errors` exports
+- **Error details are truncated in one place.** `durable_llm.errors` exports
   `error_detail(exc, limit=MAX_ERROR_DETAIL)`; the private copies in `worker.py` and
   `context.py` are gone, so a provider that returns a megabyte of HTML cannot land a megabyte
   in `runs.error_detail` by whichever path happened to catch it.

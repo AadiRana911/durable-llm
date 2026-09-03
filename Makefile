@@ -1,4 +1,4 @@
-# llmrun -- developer entrypoints.
+# durable-llm -- developer entrypoints.
 #
 # Everything below assumes exactly two things are installed: Docker and uv.
 # `make demo` must work on a clean clone with nothing else. If it does not, that is a bug.
@@ -7,7 +7,7 @@ SHELL := /bin/bash
 .SHELLFLAGS := -eu -o pipefail -c
 .DEFAULT_GOAL := help
 
-# Optional local overrides (LLMRUN_DATABASE_URL, LLMRUN_PROVIDER, ANTHROPIC_API_KEY).
+# Optional local overrides (DURABLE_LLM_DATABASE_URL, DURABLE_LLM_PROVIDER, ANTHROPIC_API_KEY).
 # See .env.example. Plain KEY=value lines only.
 -include .env
 
@@ -18,15 +18,15 @@ UV      ?= uv
 UV_RUN  := $(UV) run
 
 DB_SERVICE      ?= db
-PG_USER         ?= llmrun
-PG_DB           ?= llmrun
+PG_USER         ?= durable_llm
+PG_DB           ?= durable_llm
 PG_HOST_PORT    ?= 55432
 PG_WAIT_SECONDS ?= 60
 
-LLMRUN_DATABASE_URL ?= postgresql://llmrun:llmrun@localhost:$(PG_HOST_PORT)/$(PG_DB)
-LLMRUN_PROVIDER     ?= echo
-export LLMRUN_DATABASE_URL
-export LLMRUN_PROVIDER
+DURABLE_LLM_DATABASE_URL ?= postgresql://durable_llm:durable_llm@localhost:$(PG_HOST_PORT)/$(PG_DB)
+DURABLE_LLM_PROVIDER     ?= echo
+export DURABLE_LLM_DATABASE_URL
+export DURABLE_LLM_PROVIDER
 export ANTHROPIC_API_KEY
 
 # Put the repo root on the import path so `examples/` is importable by dotted name too.
@@ -40,11 +40,11 @@ DEMO_INPUT    ?= {"thread_id": "thread-42"}
 .PHONY: help up down demo test chaos fmt lint clean
 
 help: ## Show this help
-	@printf '\nllmrun -- make targets\n\n'
+	@printf '\ndurable-llm -- make targets\n\n'
 	@grep -E '^[a-zA-Z_-]+:.*## ' $(MAKEFILE_LIST) \
 		| sort \
 		| awk 'BEGIN {FS = ":.*## "}; {printf "  \033[36m%-8s\033[0m %s\n", $$1, $$2}'
-	@printf '\nDatabase: %s\n\n' "$(LLMRUN_DATABASE_URL)"
+	@printf '\nDatabase: %s\n\n' "$(DURABLE_LLM_DATABASE_URL)"
 
 up: ## Start Postgres, wait until it accepts connections, apply migrations
 	@$(COMPOSE) up -d
@@ -66,30 +66,30 @@ up: ## Start Postgres, wait until it accepts connections, apply migrations
 		exit 1; \
 	fi
 	@echo "==> applying migrations"
-	@$(UV_RUN) llmrun migrate --quiet
+	@$(UV_RUN) durable-llm migrate --quiet
 
 down: ## Stop Postgres (keeps the data volume)
 	$(COMPOSE) down --remove-orphans
 
 demo: up ## Run the example pipeline end to end on the echo provider and show the run
 	@printf '\n==> enqueueing %s for tenant %s\n' "$(DEMO_PIPELINE)" "$(DEMO_TENANT)"
-	@run_id="$$($(UV_RUN) llmrun enqueue $(DEMO_PIPELINE) \
+	@run_id="$$($(UV_RUN) durable-llm enqueue $(DEMO_PIPELINE) \
 			--tenant $(DEMO_TENANT) \
 			--json '$(DEMO_INPUT)' \
 			--import $(DEMO_MODULE) --quiet \
 		| grep -Eio '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}' \
 		| tail -n 1 || true)"; \
 	if [ -z "$$run_id" ]; then \
-		echo "make demo: no run id in 'llmrun enqueue' output -- see the error above" >&2; \
+		echo "make demo: no run id in 'durable-llm enqueue' output -- see the error above" >&2; \
 		exit 1; \
 	fi; \
 	printf '==> queued run %s\n' "$$run_id"; \
 	printf '==> draining the queue with the echo provider (no API key, no network)\n'; \
 	for _ in 1 2 3; do \
-		$(UV_RUN) llmrun worker --once --provider echo --import $(DEMO_MODULE) --quiet; \
+		$(UV_RUN) durable-llm worker --once --provider echo --import $(DEMO_MODULE) --quiet; \
 	done; \
-	printf '\n==> llmrun runs show %s\n\n' "$$run_id"; \
-	$(UV_RUN) llmrun runs show "$$run_id"
+	printf '\n==> durable-llm runs show %s\n\n' "$$run_id"; \
+	$(UV_RUN) durable-llm runs show "$$run_id"
 
 test: up ## Run the unit and integration suite (everything except chaos)
 	$(UV_RUN) pytest -m "not chaos"

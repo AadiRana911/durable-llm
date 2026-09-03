@@ -1,9 +1,9 @@
-llmrun -- third-party licence notice
+durable-llm -- third-party licence notice
 ====================================
 
-llmrun itself is licensed under the MIT License. See LICENSE for the full text and the
+durable-llm itself is licensed under the MIT License. See LICENSE for the full text and the
 copyright holder. Nothing below changes that; this file records the licences of the
-dependencies llmrun installs, because those terms are not all MIT and some of them place
+dependencies durable-llm installs, because those terms are not all MIT and some of them place
 obligations on anyone who redistributes a build.
 
 The licence identifiers here were read from the installed distributions' `.dist-info`
@@ -17,9 +17,9 @@ Required runtime dependency: psycopg (LGPL-3.0-only)
   psycopg          3.3.x    LGPL-3.0-only
   psycopg-binary   3.3.x    LGPL-3.0-only
 
-psycopg is llmrun's only mandatory runtime dependency and it is copyleft, not permissive.
+psycopg is durable-llm's only mandatory runtime dependency and it is copyleft, not permissive.
 Using it as a library in an unmodified, separately-installed form (the normal
-`pip install llmrun` case) does not affect the licence of your own code. Redistributing
+`pip install durable-llm` case) does not affect the licence of your own code. Redistributing
 psycopg -- vendoring it, bundling it into a container image, an installer, a frozen
 binary, or any other artefact you ship to a third party -- makes you a redistributor, and
 LGPL-3.0-only then requires you to convey the psycopg licence and source-availability
@@ -30,7 +30,7 @@ LGPL-3.0 text and your own counsel; this paragraph is a pointer, not legal advic
 Native libraries vendored by psycopg[binary]
 --------------------------------------------
 
-llmrun depends on `psycopg[binary]`, which installs the psycopg-binary wheel. That wheel
+durable-llm depends on `psycopg[binary]`, which installs the psycopg-binary wheel. That wheel
 does not link against a system libpq -- it ships its own copy of libpq together with the
 transitive native stack libpq needs:
 
@@ -58,7 +58,7 @@ down rather than assumed.
 Optional `anthropic` extra
 --------------------------
 
-`pip install llmrun[anthropic]` pulls in the Anthropic SDK and its transitive closure. All
+`pip install durable-llm[anthropic]` pulls in the Anthropic SDK and its transitive closure. All
 of it is permissive, but the spread is wider than MIT alone -- notably certifi, which is
 weak-copyleft:
 
@@ -80,7 +80,7 @@ weak-copyleft:
   typing-extensions    PSF-2.0
 
 MPL-2.0 is file-level copyleft: it constrains modifications to certifi's own files, not
-code that merely imports it. The core of llmrun does not install any of these -- the
+code that merely imports it. The core of durable-llm does not install any of these -- the
 provider adapters are optional on purpose, so a deployment that only uses the `echo`
 provider carries the psycopg licences and nothing else.
 
@@ -89,5 +89,5 @@ Development-only dependencies
 -----------------------------
 
 pytest, ruff, and their transitive dependencies are in the `dev` dependency group, not in
-any published extra. They are not installed by `pip install llmrun` and are not part of
-llmrun's distributable surface, so they are not enumerated here.
+any published extra. They are not installed by `pip install durable-llm` and are not part of
+durable-llm's distributable surface, so they are not enumerated here.

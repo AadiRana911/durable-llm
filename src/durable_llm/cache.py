@@ -1,6 +1,6 @@
 """Content addressing for steps and LLM calls.
 
-Everything llmrun claims about not double-billing rests on one property:
+Everything durable_llm claims about not double-billing rests on one property:
 
     **The same logical input must produce the same hash — in a different process, on a
     different machine, on a different Python version, a week later.**
@@ -102,7 +102,7 @@ def _tagged(obj: Any) -> dict[str, str]:
 
 
 def canonical_json(value: Any) -> str:
-    """Serialise ``value`` to the one JSON form llmrun hashes.
+    """Serialise ``value`` to the one JSON form durable_llm hashes.
 
     Exposed separately from :func:`input_hash` because it is what makes the hash
     inspectable: when a cache miss is unexpected, diffing the canonical JSON of the two
@@ -135,7 +135,7 @@ def prompt_json(value: Any) -> str:
     The two functions exist because one function was doing two jobs whose requirements point
     in opposite directions. A hash key must never merge two distinct values, which is what
     the tag is for. Prompt text has no such requirement and an opposite preference: a model
-    reading ``{"amount":{"__str__":"1.50","__type__":"Decimal"}}`` is being shown llmrun's
+    reading ``{"amount":{"__str__":"1.50","__type__":"Decimal"}}`` is being shown durable_llm's
     bookkeeping instead of the number, and paying for the extra tokens. Splitting them keeps
     the idempotency key collision-free without making every prompt worse.
 

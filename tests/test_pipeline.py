@@ -23,13 +23,13 @@ from uuid import UUID
 
 import pytest
 
-from llmrun import context as context_module
-from llmrun.context import RunContext
-from llmrun.db import transaction
-from llmrun.errors import DISPOSITIONS, ErrorClass, PolicyRefusalError, TransientError
-from llmrun.pipeline import pipeline
-from llmrun.providers.echo import EchoProvider
-from llmrun.worker import run_once
+from durable_llm import context as context_module
+from durable_llm.context import RunContext
+from durable_llm.db import transaction
+from durable_llm.errors import DISPOSITIONS, ErrorClass, PolicyRefusalError, TransientError
+from durable_llm.pipeline import pipeline
+from durable_llm.providers.echo import EchoProvider
+from durable_llm.worker import run_once
 
 if TYPE_CHECKING:
     from conftest import Database
@@ -70,7 +70,7 @@ def _prompt(step: str) -> str:
 
 
 def _drive(db: Database, provider: EchoProvider) -> UUID | None:
-    """Claim and execute one run, exactly as ``llmrun worker --once`` does."""
+    """Claim and execute one run, exactly as ``durable-llm worker --once`` does."""
     return run_once(db.conn, worker_id=WORKER_ID, provider=provider, lease_seconds=30)
 
 
@@ -619,7 +619,7 @@ def test_the_in_step_transient_budget_is_bounded_never_billed_and_paced(
     db: Database,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """The branch where llmrun stops retrying a provider and lets the step fail.
+    """The branch where durable_llm stops retrying a provider and lets the step fail.
 
     ``ctx.llm`` retries a transient failure in place, and the disposition table says how many
     times. Nothing tested the *end* of that budget, because the echo provider's ``fail_at``
@@ -748,7 +748,7 @@ def test_a_failing_checkpoint_write_records_the_step_rather_than_stranding_it(
     :func:`emit_nul`). It gets all the way into ``_finish_step``'s ``UPDATE`` and dies there.
     What happens next is the property: the step must end up recorded as ``failed`` with no
     output, not stranded at ``running``. ``running`` is the single worst state a step can be
-    left in — the resumed run re-executes it (correct but silent), ``llmrun runs show``
+    left in — the resumed run re-executes it (correct but silent), ``durable-llm runs show``
     reports work in progress on a run nothing is working on, and nothing anywhere says why.
 
     Deliberately *not* asserted: that ``error_detail`` is a friendly diagnosis. It is a raw

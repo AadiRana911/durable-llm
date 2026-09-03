@@ -34,7 +34,7 @@ class Price:
 
     Both fields are coerced to :class:`Decimal` on construction, going through ``str()``
     first so that ``Price(15.0, 75.0)`` cannot smuggle a binary float artefact into the
-    ledger. ``Price("3", "15")`` and ``Price(Decimal("3"), Decimal("15"))`` are equivalent.
+    ledger. ``Price("2", "10")`` and ``Price(Decimal("2"), Decimal("10"))`` are equivalent.
     """
 
     input_per_mtok: Decimal
@@ -50,15 +50,14 @@ class Price:
 
 
 # ======================================================================================
-#  !!  PLACEHOLDER PRICES — VERIFY BEFORE YOU RELY ON THEM  !!
+#  !!  DATED PRICE SNAPSHOT — VERIFY BEFORE BILLING  !!
 #
-#  The numbers below are illustrative defaults so the project runs out of the box. They
-#  are NOT an authoritative price list, they are not maintained in lockstep with any
-#  vendor, and vendor pricing changes without notice. Before using durable_llm's cost figures
-#  for billing, budgeting, chargeback, or any decision involving real money, check each
-#  model against the provider's current published pricing page and override what you find
-#  with register_price(). Treat an unverified figure here as an estimate with an unknown
-#  error bar, not as a quote.
+#  Standard global Claude API base input/output prices below were verified on 2026-09-03
+#  against https://platform.claude.com/docs/en/about-claude/pricing. They do not model
+#  prompt caching, batch processing, regional/US-only inference, Fast mode, or negotiated
+#  rates, and they cannot update themselves when vendor pricing changes. Before using
+#  durable_llm for billing, budgeting, or chargeback, re-check that page and use
+#  register_price() for a changed or workload-specific rate.
 #
 #  `echo` is genuinely zero: it is the offline fake provider and makes no billed calls.
 # ======================================================================================
@@ -69,7 +68,7 @@ class Price:
 #  a run that cannot be priced is a run that fails.
 PRICES: dict[str, Price] = {
     "claude-opus-5": Price(Decimal("5"), Decimal("25")),
-    "claude-sonnet-5": Price(Decimal("3"), Decimal("15")),
+    "claude-sonnet-5": Price(Decimal("2"), Decimal("10")),
     "claude-haiku-4-5": Price(Decimal("1"), Decimal("5")),
     "claude-haiku-4-5-20251001": Price(Decimal("1"), Decimal("5")),
     "echo": Price(Decimal("0"), Decimal("0")),
@@ -89,7 +88,7 @@ def quantize_usd(amount: Decimal) -> Decimal:
 def register_price(model: str, price: Price) -> None:
     """Add or replace the price of ``model``.
 
-    This is the supported way to correct the placeholder table above, to price a model
+    This is the supported way to refresh the dated table above, to price a model
     durable_llm has never heard of, or to apply a negotiated rate. Overwriting is intentional —
     prices change, and a process that has to restart to pick up a new rate is a process
     that keeps billing at the old one.

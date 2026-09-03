@@ -61,7 +61,7 @@ def test_cost_is_decimal_never_float() -> None:
 
     assert isinstance(result, Decimal)
     assert not isinstance(result, float)
-    assert result == Decimal("3.000000")
+    assert result == Decimal("2.000000")
 
 
 def test_result_is_quantised_to_six_decimal_places() -> None:
@@ -73,7 +73,7 @@ def test_result_is_quantised_to_six_decimal_places() -> None:
     result = cost_of("claude-sonnet-5", 1, 1)
 
     assert result.as_tuple().exponent == -6
-    assert str(result) == "0.000018"  # (1 * 3 + 1 * 15) / 1e6
+    assert str(result) == "0.000012"  # (1 * 2 + 1 * 10) / 1e6
 
 
 def test_input_and_output_tokens_are_priced_separately() -> None:
@@ -162,14 +162,22 @@ def test_register_price_overwrites_an_existing_model() -> None:
 
     register_price("claude-sonnet-5", Price(Decimal("4"), Decimal("20")))
 
-    assert original == Decimal("3.000000")
+    assert original == Decimal("2.000000")
     assert cost_of("claude-sonnet-5", 1_000_000, 0) == Decimal("4.000000")
 
 
 def test_prices_are_seeded_for_the_documented_models() -> None:
-    """The contract names these four. A missing one is a KeyError at run time."""
-    for model in ("claude-opus-5", "claude-sonnet-5", "claude-haiku-4-5-20251001", "echo"):
-        assert model in PRICES, f"{model} must have a seeded price"
+    """The contract names these models and their verified standard global API rates."""
+    expected = {
+        "claude-opus-5": Price("5", "25"),
+        "claude-sonnet-5": Price("2", "10"),
+        "claude-haiku-4-5": Price("1", "5"),
+        "claude-haiku-4-5-20251001": Price("1", "5"),
+        "echo": Price("0", "0"),
+    }
+
+    for model, price in expected.items():
+        assert PRICES.get(model) == price, f"{model} must carry the documented price"
 
 
 def test_price_fields_are_decimal_even_when_constructed_from_floats() -> None:
@@ -190,13 +198,13 @@ def test_negative_prices_are_rejected() -> None:
         Price(Decimal("-1"), Decimal("1"))
 
 
-def test_price_table_is_documented_as_a_placeholder() -> None:
-    """The seeded figures are illustrative, and the module must say so.
+def test_price_table_is_documented_as_a_dated_snapshot() -> None:
+    """The seeded figures are verified but time-bound, and the module must say so.
 
-    Presenting unverified vendor pricing as authoritative is how a cost tool ends up
-    quoted in someone's budget spreadsheet. If the warning above ``PRICES`` is ever
-    deleted, this fails.
+    Presenting a vendor price as timeless is how a cost tool ends up disagreeing with an
+    invoice. If the date or authoritative source above ``PRICES`` is deleted, this fails.
     """
     source = inspect.getsource(cost_module)
 
-    assert "PLACEHOLDER" in source.upper()
+    assert "2026-09-03" in source
+    assert "https://platform.claude.com/docs/en/about-claude/pricing" in source

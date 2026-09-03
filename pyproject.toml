@@ -16,7 +16,7 @@ readme = "README.md"
 requires-python = ">=3.11"
 license = "MIT"
 license-files = ["LICENSE"]
-authors = [{ name = "Asad Imtiaz" }]
+authors = [{ name = "Asad Imtiaz", email = "hello@itsasad.me" }]
 keywords = ["llm", "pipeline", "postgres", "idempotency", "durable-execution", "anthropic"]
 classifiers = [
     "Development Status :: 3 - Alpha",
@@ -51,10 +51,11 @@ dependencies = ["psycopg[binary]>=3.2"]
 anthropic = ["anthropic>=0.121,<1"]
 
 [project.urls]
-Homepage = "https://github.com/asadimtiaz/durable-llm"
-Repository = "https://github.com/asadimtiaz/durable-llm"
-Issues = "https://github.com/asadimtiaz/durable-llm/issues"
-Documentation = "https://github.com/asadimtiaz/durable-llm/blob/main/docs/DESIGN.md"
+Homepage = "https://github.com/AadiRana911/durable-llm"
+Repository = "https://github.com/AadiRana911/durable-llm"
+Issues = "https://github.com/AadiRana911/durable-llm/issues"
+Documentation = "https://github.com/AadiRana911/durable-llm/blob/main/docs/DESIGN.md"
+LinkedIn = "https://www.linkedin.com/in/asad-imtiaz-rana/"
 
 # Test and lint tooling is not part of the installable surface, so it is a dependency
 # *group* (PEP 735) rather than a published extra: `uv sync` installs it by default for

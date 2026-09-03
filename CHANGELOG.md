@@ -68,13 +68,18 @@ breaking changes below are recorded for anyone tracking `main` rather than a tag
   wheel outside the checkout, applies its bundled migrations to a clean Postgres service, and
   runs `durable-llm health`. This catches source-only files that an editable checkout can hide.
 - **`Provider`, `get_provider`, `Price` and `register_price` are now part of the top-level
-  facade.** Writing a custom provider and correcting the placeholder price table are ordinary
+  facade.** Writing a custom provider and refreshing the dated price snapshot are ordinary
   configuration, so they belong inside the stability promise. `import durable_llm` still pulls in
   no provider SDK: `get_provider` imports `anthropic` inside its own body.
 - **`CHANGELOG.md`** — this file.
 
 ### Fixed
 
+- **Bundled Anthropic prices now match the published standard global API rates verified on
+  2026-09-03.** Sonnet 5 is `$2/$10` per million input/output tokens; Anthropic made its
+  introductory price permanent instead of applying the previously announced `$3/$15` rate.
+  Opus 5 remains `$5/$25` and Haiku 4.5 remains `$1/$5`. The code and README now identify
+  these as a dated snapshot and name the pricing modes they do not represent.
 - **The binding design and README describe the implementation that ships.** They now include
   migration `0003`, checksums, retry pacing, database constraints, progress-based lease renewal,
   the current CLI surface, UTC log metadata, and the loopback-only development database bind.

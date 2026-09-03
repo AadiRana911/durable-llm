@@ -184,11 +184,11 @@ class _UnderProjectedProvider:
 
 
 #: Chosen so the *projection* for step one fits under the cap and the *actual* cost does
-#: not: ~21 estimated input tokens plus 256 assumed output tokens is $0.003903 against a
-#: $0.004 cap, while 4000 real input tokens is $0.012150.
+#: not: ~21 estimated input tokens plus 256 assumed output tokens is $0.002602 against a
+#: $0.004 cap, while 4000 real input tokens plus 10 output tokens is $0.008100.
 _UNDER_PROJECTED_TOKENS_IN = 4000
 _UNDER_PROJECTED_BUDGET = Decimal("0.004000")
-_UNDER_PROJECTED_ACTUAL = Decimal("0.012150")
+_UNDER_PROJECTED_ACTUAL = Decimal("0.008100")
 
 
 @pipeline(name="test_budget_under_projected_once", budget_usd="0.004", max_attempts=5)
@@ -222,14 +222,14 @@ def test_a_run_whose_only_call_crosses_the_cap_halts_instead_of_succeeding(
 ) -> None:
     """The discriminating test for the post-flight guard.
 
-    One call, and it costs three times the cap because the projection under-counted its
+    One call, and it costs more than twice the cap because the projection under-counted its
     input. ``check_budget`` cannot catch this — it compared a projection that genuinely
     fit — and there is no *next* call whose pre-flight check would catch it either. Only
     the comparison of the recorded cost against the cap, in the same transaction as the
     ledger row, is left.
 
     Delete ``budget_overrun`` from ``_billed_call`` and this run reports ``succeeded`` with
-    ``spent_usd`` at triple its cap, no error class, and nothing anywhere saying the cap
+    ``spent_usd`` above twice its cap, no error class, and nothing anywhere saying the cap
     failed to hold. That is the failure this test exists to make loud.
     """
     run_id = under_projected_once_pipeline.enqueue(

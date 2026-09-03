@@ -254,9 +254,12 @@ snapshot `claude-haiku-4-5-20251001`, and `echo` (all zeros). A dated snapshot i
 registered *alongside* its alias rather than instead of it: `context._price` looks a call
 up by whichever id the provider echoed back and falls back to the requested one, so a
 table that knows only one of the pair cannot price a call answered under the other — and a
-call that cannot be priced fails the run. **Put a prominent comment above the table stating
-the figures are placeholders that must be checked against current published pricing before
-relying on them** — do not present invented numbers as authoritative.
+call that cannot be priced fails the run. Seed standard global Claude API base input/output
+rates from Anthropic's published pricing page: Opus 5 at `$5/$25` per MTok, Sonnet 5 at
+`$2/$10`, and Haiku 4.5 at `$1/$5`, verified on 2026-09-03. **Put a prominent dated-snapshot
+comment and source URL above the table**: prices change, and these figures do not cover prompt
+caching, batch, regional/US-only inference, Fast mode, or negotiated rates. Do not present a
+verified snapshot as a timeless quote.
 
 ## `cache.py`
 

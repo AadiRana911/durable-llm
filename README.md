@@ -38,7 +38,7 @@ for tests; it is the provider the demo and the crash test run against, which is 
 makes this a sixty-second experience rather than a signup flow.
 
 ```bash
-git clone https://github.com/asadimtiaz/durable-llm.git
+git clone https://github.com/AadiRana911/durable-llm.git
 cd durable-llm
 make up      # Postgres 17 in Docker on port 55432, then applies migrations
 make demo    # enqueues a 12-step pipeline, drains it, prints the run
@@ -345,8 +345,8 @@ accumulator does not stay small.
 Because every row carries `run_id` and every run carries `tenant_id`, attributing spend to a
 tenant is a `GROUP BY` rather than a project:
 
-<sub>*Illustrative output. See the warning about the price table below — those figures are
-placeholders, not a quote.*</sub>
+<sub>*Illustrative output, repriced with the standard global Claude API rates verified on
+3 September 2026. It is an example ledger, not a vendor quote.*</sub>
 
 ```console
 $ durable-llm costs --tenant acme
@@ -355,12 +355,12 @@ COSTS  (tenant: acme)
 ============================================================================================
   PIPELINE          MODEL             RUNS  BILLED  REPLAYED     TOK IN  TOK OUT  SPEND USD  SAVED USD
   ----------------  ----------------  ----  ------  --------  ---------  -------  ---------  ---------
-  summarise_thread  claude-sonnet-5    142   1,562       118  4,912,004  611,233  23.904507   1.806133
+  summarise_thread  claude-sonnet-5    142   1,562       118  4,912,004  611,233  15.936338   1.204089
   enrich_account    claude-haiku-4-5    89     712        31  1,204,880   96,417   1.686965   0.073451
   ----------------  ----------------  ----  ------  --------  ---------  -------  ---------  ---------
-  TOTAL                                231   2,274       149  6,116,884  707,650  25.591472   1.879584
+  TOTAL                                231   2,274       149  6,116,884  707,650  17.623303   1.277540
 
-  149 replayed call(s) cost nothing: $1.879584 that a retry would have spent again.
+  149 replayed call(s) cost nothing: $1.277540 that a retry would have spent again.
 ```
 
 `REPLAYED` is the retry absorption rate and `SAVED USD` prices it. Those are the numbers that
@@ -571,7 +571,7 @@ no ORM, no migration framework, no HTTP client, no model SDK. `anthropic` is an 
 v0.1 is not on PyPI yet. Install from a checkout:
 
 ```bash
-git clone https://github.com/asadimtiaz/durable-llm.git
+git clone https://github.com/AadiRana911/durable-llm.git
 cd durable-llm
 
 uv sync                    # durable-llm + psycopg, plus pytest and ruff (the `dev` group)
@@ -635,17 +635,19 @@ The dropped set includes `temperature`, `top_p` and `top_k`, which current model
 your run. They still change the cache key, so two calls that differ only by a dropped parameter
 remain two different ledger entries.
 
-**Check the prices before you trust the numbers.** `cost.py` ships a placeholder price table so
-the project runs out of the box. Those figures are illustrative, are not maintained in lockstep
-with any vendor, and vendor pricing changes without notice. Before using durable-llm's cost output for
-billing, budgeting or chargeback, check each model against the provider's current published
-pricing and override what you find:
+**Check the date before you trust the numbers.** `cost.py` ships standard global Claude API base
+input/output prices verified against [Anthropic's pricing page](https://platform.claude.com/docs/en/about-claude/pricing)
+on 3 September 2026: Opus 5 is `$5/$25`, Sonnet 5 is `$2/$10`, and Haiku 4.5 is `$1/$5`
+per million input/output tokens. The table does not model prompt caching, batch processing,
+regional or US-only inference, Fast mode, or negotiated rates, and vendor pricing can change.
+Before using durable-llm's output for billing, budgeting, or chargeback, re-check the source and
+override a changed or workload-specific rate:
 
 ```python
 from decimal import Decimal
 from durable_llm.cost import Price, register_price
 
-register_price("claude-sonnet-5", Price(Decimal("3"), Decimal("15")))  # USD per 1M tokens
+register_price("claude-sonnet-5", Price(Decimal("2"), Decimal("10")))  # USD per 1M tokens
 ```
 
 An unknown model raises `KeyError` rather than defaulting to zero. A silent zero would be the
@@ -695,7 +697,8 @@ make, so it is not optional. What is not built yet, stated plainly:
   run id in run-specific messages — and SQL. The lines are still not JSON and there is no event
   schema, metrics endpoint, or trace context, so richer correlation requires adding your own
   handler. That is the whole observability story at v0.1.
-- **The price table is a placeholder.** See above.
+- **The price table is a dated standard-rate snapshot.** It does not model caching, batch,
+  regional/US-only inference, Fast mode, or negotiated rates. See above.
 - **Python and Postgres only.** No SQLite fallback, no MySQL.
 
 Interfaces may still change before v1. `docs/DESIGN.md` is the contract; if the code and that
@@ -729,13 +732,6 @@ of this is legal advice; if you ship binaries, ask someone whose job that is.
 Written by Asad Imtiaz. I build this kind of plumbing — durability, cost control and failure
 handling around LLM features — for B2B SaaS teams whose model spend became a line item before
 anyone had planned for it. If the failure at the top of this page is one you have actually had,
-I am happy to talk about it either way —
-[open an issue](https://github.com/asadimtiaz/durable-llm/issues), or reach me at the address on my
-GitHub profile.
-
-<!-- BEFORE PUBLISHING: replace the line above with a direct contact — an email address or a
-     LinkedIn URL — and put the same address in pyproject.toml's `authors` entry so it survives
-     into the package metadata. "Reach me via my profile" is one hop more than a reader who has
-     just finished 600 lines should have to make. Also verify the clone URL used throughout
-     this file (`github.com/asadimtiaz/durable-llm`) actually resolves; it is currently a
-     placeholder, and `git ls-remote` on it returns "Repository not found". -->
+I am happy to talk about it either way: email [hello@itsasad.me](mailto:hello@itsasad.me),
+connect on [LinkedIn](https://www.linkedin.com/in/asad-imtiaz-rana/), or
+[open an issue](https://github.com/AadiRana911/durable-llm/issues).

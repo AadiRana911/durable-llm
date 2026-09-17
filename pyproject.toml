@@ -48,7 +48,7 @@ dependencies = ["psycopg[binary]>=3.2"]
 # client constructor, and response shapes the adapter reads directly, and none of that is
 # name-resolved or defensive. Degrading is acceptable; silently mapping every call onto a
 # reshaped API is not. Lift this deliberately, after running the adapter against 1.x.
-anthropic = ["anthropic>=0.121,<1"]
+anthropic = ["anthropic>=0.121,<2"]
 
 [project.urls]
 Homepage = "https://github.com/AadiRana911/durable-llm"
